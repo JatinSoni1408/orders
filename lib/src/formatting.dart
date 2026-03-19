@@ -9,6 +9,11 @@ String _formatWeight3(double value) {
   return formatter.format(value);
 }
 
+String _formatWeightFixed3(double value) {
+  final formatter = NumberFormat('0.000', 'en_IN');
+  return formatter.format(value);
+}
+
 String _formatCurrency(double value) {
   final formatter = NumberFormat.currency(
     locale: 'en_IN',

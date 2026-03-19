@@ -2291,7 +2291,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                     textAlign: TextAlign.right,
                                   ),
                                   _EstimateTableCell(
-                                    _formatWeight3(entry.value.actualNetWeight),
+                                    _formatWeightFixed3(
+                                      entry.value.actualNetWeight,
+                                    ),
                                     textAlign: TextAlign.right,
                                   ),
                                   _EstimateTableCell(
@@ -2326,7 +2328,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                   textAlign: TextAlign.right,
                                 ),
                                 _EstimateTableCell(
-                                  _formatWeight3(_actualTotalNetWeight),
+                                  _formatWeightFixed3(_actualTotalNetWeight),
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
@@ -2339,7 +2341,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       const SizedBox(height: 12),
                       _EstimateSummaryRow(
                         label: 'Actual Nett Weight',
-                        value: '${_formatWeight3(_actualTotalNetWeight)} gm',
+                        value:
+                            '${_formatWeightFixed3(_actualTotalNetWeight)} gm',
                         emphasize: true,
                       ),
                     ],
@@ -3278,7 +3281,7 @@ class _ActualItemEditor extends StatelessWidget {
                 suffixText: 'g',
               ),
               child: Text(
-                _formatWeight3(item.actualNetWeight),
+                _formatWeightFixed3(item.actualNetWeight),
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
