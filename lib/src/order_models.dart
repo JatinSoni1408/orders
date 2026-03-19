@@ -13,6 +13,8 @@ enum AppSection {
 
 enum OrderSortOption { newest, oldest, deliverySoonest, deliveryLatest, nameAZ }
 
+enum AdvanceMode { cash, upi, banking }
+
 class Order {
   Order({
     required this.id,
@@ -22,6 +24,7 @@ class Order {
     required this.status,
     required this.createdAt,
     List<AdvancePayment>? advancePayments,
+    List<OldItemReturn>? oldItemReturns,
     this.customerPhone,
     this.altCustomerPhone,
     this.customerPhotoPath,
@@ -32,7 +35,8 @@ class Order {
     this.occasion,
     this.occasionDate,
     this.deliveryDate,
-  }) : advancePayments = advancePayments ?? const [];
+  }) : advancePayments = advancePayments ?? const [],
+       oldItemReturns = oldItemReturns ?? const [];
 
   final String id;
   final String customer;
@@ -41,6 +45,7 @@ class Order {
   final OrderStatus status;
   final DateTime createdAt;
   final List<AdvancePayment> advancePayments;
+  final List<OldItemReturn> oldItemReturns;
   final String? customerPhone;
   final String? altCustomerPhone;
   final String? customerPhotoPath;
@@ -63,6 +68,7 @@ class Order {
       'advancePayments': advancePayments
           .map((payment) => payment.toJson())
           .toList(),
+      'oldItemReturns': oldItemReturns.map((item) => item.toJson()).toList(),
       'customerPhone': customerPhone,
       'altCustomerPhone': altCustomerPhone,
       'customerPhotoPath': customerPhotoPath,
@@ -91,6 +97,9 @@ class Order {
             (payment) =>
                 AdvancePayment.fromJson(payment as Map<String, dynamic>),
           )
+          .toList(),
+      oldItemReturns: (json['oldItemReturns'] as List<dynamic>? ?? const [])
+          .map((item) => OldItemReturn.fromJson(item as Map<String, dynamic>))
           .toList(),
       customerPhone: json['customerPhone'] as String?,
       altCustomerPhone: json['altCustomerPhone'] as String?,
@@ -185,35 +194,156 @@ class OrderItem {
 class AdvancePayment {
   const AdvancePayment({
     required this.date,
+    required this.mode,
     required this.amount,
     required this.rate,
     required this.making,
     required this.weight,
+    this.chequeNumber,
   });
 
   final DateTime date;
+  final AdvanceMode mode;
   final double amount;
   final double rate;
   final double making;
   final double weight;
+  final String? chequeNumber;
 
   Map<String, dynamic> toJson() {
     return {
       'date': date.toIso8601String(),
+      'mode': mode.name,
       'amount': amount,
       'rate': rate,
       'making': making,
       'weight': weight,
+      'chequeNumber': chequeNumber,
     };
   }
 
   factory AdvancePayment.fromJson(Map<String, dynamic> json) {
     return AdvancePayment(
       date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      mode: AdvanceMode.values.firstWhere(
+        (value) =>
+            value.name ==
+            ((json['mode'] as String?) ?? (json['metal'] as String?) ?? ''),
+        orElse: () => AdvanceMode.cash,
+      ),
       amount: (json['amount'] as num).toDouble(),
       rate: (json['rate'] as num).toDouble(),
       making: (json['making'] as num).toDouble(),
       weight: (json['weight'] as num).toDouble(),
+      chequeNumber: json['chequeNumber'] as String?,
+    );
+  }
+}
+
+class AdvanceValuationLine {
+  const AdvanceValuationLine({
+    required this.date,
+    required this.mode,
+    required this.amount,
+    required this.rate,
+    required this.rateMaking,
+    this.chequeNumber,
+  });
+
+  final DateTime date;
+  final AdvanceMode mode;
+  final double amount;
+  final double rate;
+  final double rateMaking;
+  final String? chequeNumber;
+
+  double get effectiveRate {
+    return rate + ((rate * rateMaking) / 100);
+  }
+
+  double get weight {
+    final denominator = effectiveRate;
+    if (denominator <= 0) {
+      return 0;
+    }
+    return amount / denominator;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date.toIso8601String(),
+      'mode': mode.name,
+      'amount': amount,
+      'rate': rate,
+      'rateMaking': rateMaking,
+      'chequeNumber': chequeNumber,
+    };
+  }
+
+  factory AdvanceValuationLine.fromJson(Map<String, dynamic> json) {
+    final legacyRate = (json['rate'] as num?)?.toDouble() ?? 0;
+    final legacyWeight = (json['weight'] as num?)?.toDouble() ?? 0;
+    return AdvanceValuationLine(
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      mode: AdvanceMode.values.firstWhere(
+        (value) =>
+            value.name ==
+            ((json['mode'] as String?) ?? (json['metal'] as String?) ?? ''),
+        orElse: () => AdvanceMode.cash,
+      ),
+      amount:
+          (json['amount'] as num?)?.toDouble() ?? (legacyWeight * legacyRate),
+      rate: legacyRate,
+      rateMaking: (json['rateMaking'] as num?)?.toDouble() ?? 0,
+      chequeNumber: json['chequeNumber'] as String?,
+    );
+  }
+}
+
+class OldItemReturn {
+  const OldItemReturn({
+    required this.date,
+    required this.itemName,
+    required this.returnRate,
+    required this.grossWeight,
+    required this.lessWeight,
+    required this.tanch,
+  });
+
+  final DateTime date;
+  final String itemName;
+  final double returnRate;
+  final double grossWeight;
+  final double lessWeight;
+  final double tanch;
+
+  double get nettWeight {
+    final value = grossWeight - lessWeight;
+    return value > 0 ? value : 0;
+  }
+
+  double get amount => nettWeight * tanch * returnRate;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date.toIso8601String(),
+      'itemName': itemName,
+      'returnRate': returnRate,
+      'grossWeight': grossWeight,
+      'lessWeight': lessWeight,
+      'tanch': tanch,
+      'amount': amount,
+    };
+  }
+
+  factory OldItemReturn.fromJson(Map<String, dynamic> json) {
+    return OldItemReturn(
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      itemName: json['itemName'] as String? ?? '',
+      returnRate: (json['returnRate'] as num?)?.toDouble() ?? 0,
+      grossWeight: (json['grossWeight'] as num?)?.toDouble() ?? 0,
+      lessWeight: (json['lessWeight'] as num?)?.toDouble() ?? 0,
+      tanch: (json['tanch'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -284,6 +414,19 @@ extension OrderStatusX on OrderStatus {
         return Colors.green.shade600;
       case OrderStatus.canceled:
         return Colors.red.shade600;
+    }
+  }
+}
+
+extension AdvanceModeX on AdvanceMode {
+  String get label {
+    switch (this) {
+      case AdvanceMode.cash:
+        return 'Cash';
+      case AdvanceMode.upi:
+        return 'Upi';
+      case AdvanceMode.banking:
+        return 'Banking';
     }
   }
 }

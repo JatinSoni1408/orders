@@ -5,8 +5,8 @@ String _formatEntryDate(DateTime dateTime) {
 }
 
 String _formatWeight3(double value) {
-  final truncated = (value * 1000).floorToDouble() / 1000;
-  return truncated.toStringAsFixed(3);
+  final formatter = NumberFormat('0.000############', 'en_IN');
+  return formatter.format(value);
 }
 
 String _formatCurrency(double value) {

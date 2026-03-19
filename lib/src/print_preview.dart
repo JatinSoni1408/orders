@@ -765,3 +765,319 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
     return byteData!.buffer.asUint8List();
   }
 }
+
+class _AdvancePrintPreviewSheet extends StatelessWidget {
+  const _AdvancePrintPreviewSheet({
+    required this.items,
+    required this.oldItems,
+    required this.totalAmount,
+  });
+
+  final List<_AdvanceValuationDraft> items;
+  final List<_AdvanceOldItemDraft> oldItems;
+  final double totalAmount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('Advance PDF Preview'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: PdfPreview(
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowSharing: false,
+                  pdfFileName: 'advance-preview.pdf',
+                  build: _buildAdvancePdf,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<Uint8List> _buildAdvancePdf(PdfPageFormat format) async {
+    final document = pw.Document();
+    final lines = items
+        .where((item) => !item.isEmpty)
+        .map((item) => item.line)
+        .toList();
+    final totalNetWeight = lines.fold<double>(
+      0,
+      (sum, line) => sum + line.weight,
+    );
+    final oldItemLines = oldItems.where((item) => !item.isEmpty).toList();
+    final oldItemsTotalAmount = oldItemLines.fold<double>(
+      0,
+      (sum, item) => sum + item.amount,
+    );
+
+    document.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5,
+        margin: const pw.EdgeInsets.all(16),
+        build: (context) {
+          final headerStyle = pw.TextStyle(
+            fontSize: 14,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+          final bodyStyle = const pw.TextStyle(
+            fontSize: 9,
+            color: PdfColors.black,
+          );
+          final labelStyle = pw.TextStyle(
+            fontSize: 8,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+
+          pw.Widget tableCell(
+            String text, {
+            pw.Alignment alignment = pw.Alignment.centerLeft,
+            bool isHeader = false,
+          }) {
+            return pw.Container(
+              alignment: alignment,
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 4,
+                vertical: 4,
+              ),
+              color: isHeader ? PdfColors.grey200 : null,
+              child: pw.Text(
+                text.isEmpty ? ' ' : text,
+                style: isHeader ? labelStyle : bodyStyle,
+                textAlign: alignment == pw.Alignment.center
+                    ? pw.TextAlign.center
+                    : alignment == pw.Alignment.centerRight
+                    ? pw.TextAlign.right
+                    : pw.TextAlign.left,
+              ),
+            );
+          }
+
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Center(child: pw.Text('Advance', style: headerStyle)),
+              pw.SizedBox(height: 10),
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400),
+                columnWidths: const {
+                  0: pw.FixedColumnWidth(38),
+                  1: pw.FixedColumnWidth(34),
+                  2: pw.FixedColumnWidth(46),
+                  3: pw.FixedColumnWidth(48),
+                  4: pw.FixedColumnWidth(42),
+                  5: pw.FixedColumnWidth(40),
+                  6: pw.FixedColumnWidth(44),
+                },
+                children: [
+                  pw.TableRow(
+                    children: [
+                      tableCell('Date', isHeader: true),
+                      tableCell('Mode', isHeader: true),
+                      tableCell('Cheque No', isHeader: true),
+                      tableCell(
+                        'Amount',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
+                        'Rate22',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
+                        'Making%',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
+                        'Net Wt',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                    ],
+                  ),
+                  ...lines.map(
+                    (line) => pw.TableRow(
+                      children: [
+                        tableCell(_formatEntryDate(line.date)),
+                        tableCell(line.mode.label),
+                        tableCell(line.chequeNumber ?? '-'),
+                        tableCell(
+                          _formatCurrency(line.amount),
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          _formatCurrency(line.rate),
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          '${line.rateMaking.toStringAsFixed(2)}%',
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          _formatWeight3(line.weight),
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                      ],
+                    ),
+                  ),
+                  pw.TableRow(
+                    children: [
+                      tableCell(''),
+                      tableCell('Total', isHeader: true),
+                      tableCell(''),
+                      tableCell(
+                        _formatCurrency(totalAmount),
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(''),
+                      tableCell(''),
+                      tableCell(
+                        _formatWeight3(totalNetWeight),
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              if (oldItemLines.isNotEmpty) pw.SizedBox(height: 12),
+              if (oldItemLines.isNotEmpty)
+                pw.Text('Old Items', style: headerStyle),
+              if (oldItemLines.isNotEmpty) pw.SizedBox(height: 8),
+              if (oldItemLines.isNotEmpty)
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey400),
+                  columnWidths: const {
+                    0: pw.FixedColumnWidth(34),
+                    1: pw.FlexColumnWidth(1.8),
+                    2: pw.FixedColumnWidth(36),
+                    3: pw.FixedColumnWidth(34),
+                    4: pw.FixedColumnWidth(34),
+                    5: pw.FixedColumnWidth(34),
+                    6: pw.FixedColumnWidth(30),
+                    7: pw.FixedColumnWidth(44),
+                  },
+                  children: [
+                    pw.TableRow(
+                      children: [
+                        tableCell('Date', isHeader: true),
+                        tableCell('Item', isHeader: true),
+                        tableCell(
+                          'Rate',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          'Gross',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          'Less',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          'Nett',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          'Purity',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          'Amount',
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                      ],
+                    ),
+                    ...oldItemLines.map(
+                      (item) => pw.TableRow(
+                        children: [
+                          tableCell(_formatEntryDate(item.date)),
+                          tableCell(item.itemNameController.text.trim()),
+                          tableCell(
+                            _formatCurrency(item.returnRate),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            _formatWeight3(item.grossWeight),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            _formatWeight3(item.lessWeight),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            _formatWeight3(item.nettWeight),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            _formatWeight3(item.tanch),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            _formatCurrency(item.amount),
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.TableRow(
+                      children: [
+                        tableCell(''),
+                        tableCell('Total', isHeader: true),
+                        tableCell(''),
+                        tableCell(''),
+                        tableCell(''),
+                        tableCell(''),
+                        tableCell(''),
+                        tableCell(
+                          _formatCurrency(oldItemsTotalAmount),
+                          isHeader: true,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return document.save();
+  }
+}
