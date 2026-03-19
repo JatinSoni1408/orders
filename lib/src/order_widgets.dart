@@ -1,108 +1,95 @@
 part of '../main.dart';
 
 class _OrderCard extends StatelessWidget {
-  const _OrderCard({required this.order, required this.onView});
+  const _OrderCard({
+    required this.order,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final Order order;
-  final VoidCallback onView;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final hasPickedPhoto =
-        order.customerPhotoPath != null &&
-        order.customerPhotoPath!.trim().isNotEmpty;
-
-    ImageProvider? avatarImage;
-
-    if (hasPickedPhoto) {
-      avatarImage = FileImage(File(order.customerPhotoPath!));
-    }
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: order.status.color(context).withAlpha(38),
-              backgroundImage: avatarImage,
-              child: avatarImage != null
-                  ? null
-                  : Text(
-                      order.customer.substring(0, 1),
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: order.status.color(context),
-                      ),
-                    ),
-            ),
-            const SizedBox(width: 16),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          order.customer,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
+                  _StatusPill(status: order.status),
+                  const SizedBox(height: 8),
+                  Text(
+                    order.customer,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  if (order.customerPhone != null &&
-                      order.customerPhone!.trim().isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            order.customerPhone!,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: Colors.grey.shade700),
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 4),
+                  Text(
+                    (order.customerPhone ?? '').trim().isEmpty
+                        ? '-'
+                        : order.customerPhone!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade700,
                     ),
-                  ] else ...[
-                    const SizedBox(height: 4),
-                    const SizedBox.shrink(),
-                  ],
-                  if (order.altCustomerPhone != null &&
-                      order.altCustomerPhone!.trim().isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      order.altCustomerPhone!,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ],
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 12),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _StatusPill(status: order.status),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 36,
-                    height: 36,
+            Flexible(
+              fit: FlexFit.loose,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    order.deliveryDate == null
+                        ? 'Delivery Date: -'
+                        : 'Delivery Date: ${_formatEntryDate(order.deliveryDate!)}',
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade700,
+                    ),
                   ),
-                  padding: EdgeInsets.zero,
-                  onPressed: onView,
-                  icon: const Icon(Icons.remove_red_eye_outlined, size: 20),
-                  tooltip: 'View order',
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton.filledTonal(
+                        onPressed: onEdit,
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                        tooltip: 'Edit',
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        onPressed: onDelete,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.errorContainer,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onErrorContainer,
+                        ),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        tooltip: 'Delete',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -131,49 +118,6 @@ class _StatusPill extends StatelessWidget {
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           color: color,
           fontWeight: FontWeight.w600,
-          fontSize: 14,
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onAdd});
-
-  final VoidCallback onAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            Icon(
-              Icons.inbox_outlined,
-              size: 40,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'No jewellery orders yet',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Create your first jewellery order to get started.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: const Text('Add order'),
-            ),
-          ],
         ),
       ),
     );

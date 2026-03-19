@@ -2,7 +2,16 @@ part of '../main.dart';
 
 enum OrderStatus { pending, preparing, outForDelivery, delivered, canceled }
 
-enum AppSection { orders, estimateCalculator }
+enum AppSection {
+  orders,
+  estimateCalculator,
+  advance,
+  actual,
+  items,
+  billPreview,
+}
+
+enum OrderSortOption { newest, oldest, deliverySoonest, deliveryLatest, nameAZ }
 
 class Order {
   Order({
@@ -16,6 +25,13 @@ class Order {
     this.customerPhone,
     this.altCustomerPhone,
     this.customerPhotoPath,
+    this.estimatePurity,
+    this.estimateGst,
+    this.estimateMaking,
+    this.estimateWeightRange,
+    this.occasion,
+    this.occasionDate,
+    this.deliveryDate,
   }) : advancePayments = advancePayments ?? const [];
 
   final String id;
@@ -28,6 +44,13 @@ class Order {
   final String? customerPhone;
   final String? altCustomerPhone;
   final String? customerPhotoPath;
+  final String? estimatePurity;
+  final double? estimateGst;
+  final double? estimateMaking;
+  final String? estimateWeightRange;
+  final String? occasion;
+  final DateTime? occasionDate;
+  final DateTime? deliveryDate;
 
   Map<String, dynamic> toJson() {
     return {
@@ -43,6 +66,13 @@ class Order {
       'customerPhone': customerPhone,
       'altCustomerPhone': altCustomerPhone,
       'customerPhotoPath': customerPhotoPath,
+      'estimatePurity': estimatePurity,
+      'estimateGst': estimateGst,
+      'estimateMaking': estimateMaking,
+      'estimateWeightRange': estimateWeightRange,
+      'occasion': occasion,
+      'occasionDate': occasionDate?.toIso8601String(),
+      'deliveryDate': deliveryDate?.toIso8601String(),
     };
   }
 
@@ -55,7 +85,7 @@ class Order {
           .toList(),
       total: (json['total'] as num).toDouble(),
       status: _orderStatusFromName(json['status'] as String),
-      createdAt: DateTime.parse(json['createdAt'] as String),
+      createdAt: _dateTimeFromJson(json['createdAt']) ?? DateTime.now(),
       advancePayments: (json['advancePayments'] as List<dynamic>? ?? const [])
           .map(
             (payment) =>
@@ -65,6 +95,13 @@ class Order {
       customerPhone: json['customerPhone'] as String?,
       altCustomerPhone: json['altCustomerPhone'] as String?,
       customerPhotoPath: json['customerPhotoPath'] as String?,
+      estimatePurity: json['estimatePurity'] as String?,
+      estimateGst: (json['estimateGst'] as num?)?.toDouble(),
+      estimateMaking: (json['estimateMaking'] as num?)?.toDouble(),
+      estimateWeightRange: json['estimateWeightRange'] as String?,
+      occasion: json['occasion'] as String?,
+      occasionDate: _dateTimeFromJson(json['occasionDate']),
+      deliveryDate: _dateTimeFromJson(json['deliveryDate']),
     );
   }
 }
@@ -78,6 +115,14 @@ class OrderItem {
     required this.bhav,
     required this.weight,
     required this.making,
+    this.purity,
+    this.notes,
+    this.estimatedWeight,
+    this.grossWeight,
+    this.lessWeight,
+    this.netWeight,
+    this.size,
+    this.length,
   });
 
   final String name;
@@ -87,6 +132,14 @@ class OrderItem {
   final double bhav;
   final double weight;
   final double making;
+  final String? purity;
+  final String? notes;
+  final double? estimatedWeight;
+  final double? grossWeight;
+  final double? lessWeight;
+  final double? netWeight;
+  final String? size;
+  final String? length;
 
   Map<String, dynamic> toJson() {
     return {
@@ -97,18 +150,34 @@ class OrderItem {
       'bhav': bhav,
       'weight': weight,
       'making': making,
+      'purity': purity,
+      'notes': notes,
+      'estimatedWeight': estimatedWeight,
+      'grossWeight': grossWeight,
+      'lessWeight': lessWeight,
+      'netWeight': netWeight,
+      'size': size,
+      'length': length,
     };
   }
 
   factory OrderItem.fromJson(Map<String, dynamic> json) {
     return OrderItem(
       name: json['name'] as String,
-      category: json['category'] as String,
-      date: DateTime.parse(json['date'] as String),
-      quantity: json['quantity'] as int,
+      category: json['category'] as String? ?? '',
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      quantity: json['quantity'] as int? ?? 0,
       bhav: (json['bhav'] as num).toDouble(),
       weight: (json['weight'] as num).toDouble(),
       making: (json['making'] as num).toDouble(),
+      purity: json['purity'] as String?,
+      notes: json['notes'] as String?,
+      estimatedWeight: (json['estimatedWeight'] as num?)?.toDouble(),
+      grossWeight: (json['grossWeight'] as num?)?.toDouble(),
+      lessWeight: (json['lessWeight'] as num?)?.toDouble(),
+      netWeight: (json['netWeight'] as num?)?.toDouble(),
+      size: json['size'] as String?,
+      length: json['length'] as String?,
     );
   }
 }
@@ -140,13 +209,29 @@ class AdvancePayment {
 
   factory AdvancePayment.fromJson(Map<String, dynamic> json) {
     return AdvancePayment(
-      date: DateTime.parse(json['date'] as String),
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
       amount: (json['amount'] as num).toDouble(),
       rate: (json['rate'] as num).toDouble(),
       making: (json['making'] as num).toDouble(),
       weight: (json['weight'] as num).toDouble(),
     );
   }
+}
+
+DateTime? _dateTimeFromJson(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is num) {
+    return DateTime.fromMillisecondsSinceEpoch(value.toInt());
+  }
+
+  final text = value.toString().trim();
+  if (text.isEmpty || text.toLowerCase() == 'null') {
+    return null;
+  }
+
+  return DateTime.tryParse(text);
 }
 
 OrderStatus _orderStatusFromName(String value) {
@@ -199,6 +284,23 @@ extension OrderStatusX on OrderStatus {
         return Colors.green.shade600;
       case OrderStatus.canceled:
         return Colors.red.shade600;
+    }
+  }
+}
+
+extension OrderSortOptionX on OrderSortOption {
+  String get label {
+    switch (this) {
+      case OrderSortOption.newest:
+        return 'Newest';
+      case OrderSortOption.oldest:
+        return 'Oldest';
+      case OrderSortOption.deliverySoonest:
+        return 'Delivery Soon';
+      case OrderSortOption.deliveryLatest:
+        return 'Delivery Late';
+      case OrderSortOption.nameAZ:
+        return 'Name A-Z';
     }
   }
 }

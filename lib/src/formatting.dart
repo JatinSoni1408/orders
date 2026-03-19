@@ -1,9 +1,7 @@
 part of '../main.dart';
 
 String _formatEntryDate(DateTime dateTime) {
-  final month = _monthLabel(dateTime.month);
-
-  return '${dateTime.day} $month ${dateTime.year}';
+  return DateFormat('dd/MM/yy').format(dateTime);
 }
 
 String _formatWeight3(double value) {
@@ -21,21 +19,39 @@ String _formatCurrency(double value) {
   return formatter.format(value);
 }
 
-String _monthLabel(int month) {
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
+class _WordCapitalizeFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final text = newValue.text;
+    if (text.isEmpty) {
+      return newValue;
+    }
 
-  return months[(month - 1).clamp(0, 11)];
+    final buffer = StringBuffer();
+    var capitalizeNext = true;
+
+    for (var index = 0; index < text.length; index++) {
+      final char = text[index];
+      if (capitalizeNext) {
+        buffer.write(char.toUpperCase());
+      } else {
+        buffer.write(char);
+      }
+      capitalizeNext = char.trim().isEmpty;
+    }
+
+    final formattedText = buffer.toString();
+    if (formattedText == text) {
+      return newValue;
+    }
+
+    return TextEditingValue(
+      text: formattedText,
+      selection: newValue.selection,
+      composing: TextRange.empty,
+    );
+  }
 }

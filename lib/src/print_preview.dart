@@ -229,11 +229,53 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
   final String totalWeight;
   final List<_EstimateItemDraft> items;
 
+  List<MapEntry<String, double>> get _categoryWeightEntries {
+    const preferredOrder = ['22K', '18K', 'Silver'];
+    final totals = <String, double>{};
+
+    for (final item in items.where((item) => !item.isEmpty)) {
+      final category = item.purityController.text.trim().isEmpty
+          ? 'Other'
+          : item.purityController.text.trim();
+      totals.update(
+        category,
+        (value) => value + item.estimatedWeight,
+        ifAbsent: () => item.estimatedWeight,
+      );
+    }
+
+    final entries = totals.entries.toList();
+    entries.sort((a, b) {
+      final aIndex = preferredOrder.indexOf(a.key);
+      final bIndex = preferredOrder.indexOf(b.key);
+      final normalizedAIndex = aIndex == -1 ? preferredOrder.length : aIndex;
+      final normalizedBIndex = bIndex == -1 ? preferredOrder.length : bIndex;
+      final orderCompare = normalizedAIndex.compareTo(normalizedBIndex);
+      if (orderCompare != 0) {
+        return orderCompare;
+      }
+      return a.key.compareTo(b.key);
+    });
+    return entries;
+  }
+
+  double _categoryWeightFor(String category) {
+    return _categoryWeightEntries
+        .firstWhere(
+          (entry) => entry.key == category,
+          orElse: () => const MapEntry('', 0),
+        )
+        .value;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leading: const BackButton(),
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+        ),
         title: const Text('Estimate PDF Preview'),
       ),
       body: Padding(
@@ -268,167 +310,397 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
   }
 
   Future<Uint8List> _buildEstimatePdf(PdfPageFormat format) async {
-    final document = pw.Document();
-    final shreeHeaderImage = pw.MemoryImage(await _buildShreeHeaderImage());
-    final labelStyle = pw.TextStyle(fontSize: 9, color: PdfColors.grey700);
-    final valueStyle = pw.TextStyle(
-      fontSize: 11,
-      fontWeight: pw.FontWeight.bold,
-    );
-    final headingStyle = pw.TextStyle(
-      fontSize: 18,
-      fontWeight: pw.FontWeight.bold,
-      letterSpacing: 0.6,
-    );
+    try {
+      final document = pw.Document();
+      pw.MemoryImage? shreeHeaderImage;
+      try {
+        final shreeHeaderBytes = await _buildShreeHeaderImage().timeout(
+          const Duration(seconds: 2),
+        );
+        if (shreeHeaderBytes.isNotEmpty) {
+          shreeHeaderImage = pw.MemoryImage(shreeHeaderBytes);
+        }
+      } catch (_) {
+        shreeHeaderImage = null;
+      }
 
-    pw.Widget infoCell(String label, String value) {
-      return pw.Container(
-        padding: const pw.EdgeInsets.all(10),
-        decoration: pw.BoxDecoration(
-          border: pw.Border.all(color: PdfColors.grey300),
-          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-        ),
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(label, style: labelStyle),
-            pw.SizedBox(height: 4),
-            pw.Text(value, style: valueStyle),
-          ],
-        ),
+      final pageFormat = PdfPageFormat.a5;
+      final itemCount = items.length;
+      final longestItemNameLength = items.fold<int>(0, (maxLength, item) {
+        final currentLength = item.nameController.text.trim().length;
+        return currentLength > maxLength ? currentLength : maxLength;
+      });
+      var itemNameColumnWidth = 62.0 + (longestItemNameLength * 2.4);
+      if (itemNameColumnWidth < 76) {
+        itemNameColumnWidth = 76;
+      } else if (itemNameColumnWidth > 126) {
+        itemNameColumnWidth = 126;
+      }
+      final compactTableFontSize = itemCount <= 4
+          ? 9.4
+          : itemCount <= 8
+          ? 8.0
+          : 7.0;
+      final compactLabelFontSize = itemCount <= 8 ? 7.0 : 6.2;
+      final compactValueFontSize = itemCount <= 8 ? 7.6 : 6.8;
+      final tableVerticalPadding = itemCount <= 8 ? 3.2 : 2.6;
+      final labelStyle = pw.TextStyle(
+        fontSize: compactLabelFontSize,
+        color: PdfColors.black,
+        fontWeight: pw.FontWeight.bold,
       );
-    }
+      final valueStyle = pw.TextStyle(
+        fontSize: compactValueFontSize,
+        fontWeight: pw.FontWeight.bold,
+        color: PdfColors.black,
+      );
+      final headingStyle = pw.TextStyle(
+        fontSize: 14,
+        fontWeight: pw.FontWeight.bold,
+        letterSpacing: 0.4,
+        color: PdfColors.black,
+      );
 
-    document.addPage(
-      pw.MultiPage(
-        pageFormat: format,
-        margin: const pw.EdgeInsets.all(24),
-        build: (context) => [
-          pw.Center(child: pw.Image(shreeHeaderImage, width: 180)),
-          pw.SizedBox(height: 14),
-          pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
+      pw.Widget infoCell(String label, String value) {
+        return pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(color: PdfColors.grey300),
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+          ),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
+              pw.Text(label, style: labelStyle),
+              pw.SizedBox(height: 2),
               pw.Container(
-                width: 14,
-                height: 14,
-                decoration: pw.BoxDecoration(
-                  border: pw.Border.all(color: PdfColors.black, width: 1),
-                ),
-              ),
-              pw.Text(
-                DateFormat('dd/MM/yyyy').format(DateTime.now()),
-                style: labelStyle,
+                height: compactValueFontSize + 2,
+                alignment: pw.Alignment.centerLeft,
+                child: pw.Text(value, style: valueStyle, maxLines: 1),
               ),
             ],
           ),
-          pw.SizedBox(height: 12),
-          pw.Center(child: pw.Text('Estimate', style: headingStyle)),
-          pw.SizedBox(height: 16),
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(child: infoCell('Name', customerName)),
-              pw.SizedBox(width: 10),
-              pw.Expanded(child: infoCell('Whatsapp Number', customerMobile)),
-            ],
+        );
+      }
+
+      pw.Widget tableCell(
+        String text, {
+        required pw.TextStyle style,
+        pw.Alignment alignment = pw.Alignment.centerLeft,
+        PdfColor? backgroundColor,
+      }) {
+        return pw.Container(
+          alignment: alignment,
+          color: backgroundColor,
+          padding: pw.EdgeInsets.symmetric(
+            horizontal: 4,
+            vertical: tableVerticalPadding,
           ),
-          pw.SizedBox(height: 10),
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(child: infoCell('Alternate Mobile', alternateMobile)),
-              pw.SizedBox(width: 10),
-              pw.Expanded(child: infoCell('Status', statusLabel)),
-            ],
-          ),
-          pw.SizedBox(height: 10),
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Expanded(child: infoCell('Occasion', occasion)),
-              pw.SizedBox(width: 10),
-              pw.Expanded(child: infoCell('Occasion Date', occasionDate)),
-            ],
-          ),
-          pw.SizedBox(height: 14),
-          pw.Row(
-            children: [
-              pw.Expanded(child: infoCell('Purity', purity)),
-              pw.SizedBox(width: 10),
-              pw.Expanded(child: infoCell('Making', making)),
-              pw.SizedBox(width: 10),
-              pw.Expanded(child: infoCell('GST', gst)),
-            ],
-          ),
-          pw.SizedBox(height: 18),
-          pw.TableHelper.fromTextArray(
-            border: pw.TableBorder.all(color: PdfColors.grey400),
-            headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
-            headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-            cellAlignment: pw.Alignment.centerLeft,
-            cellPadding: const pw.EdgeInsets.symmetric(
-              horizontal: 8,
-              vertical: 6,
+          child: pw.Container(
+            height: compactTableFontSize + 3,
+            alignment: alignment,
+            child: pw.Text(
+              text.isEmpty ? ' ' : text,
+              style: style,
+              maxLines: 1,
             ),
-            headers: const [
-              'S No',
-              'Purity',
-              'Item Name',
-              'Qty',
-              'Weight (gm)',
-              'Notes / Instructions',
-            ],
-            data: [
-              ...items.asMap().entries.map(
-                (entry) => [
-                  '${entry.key + 1}',
-                  entry.value.purityController.text.trim(),
-                  entry.value.nameController.text.trim(),
-                  entry.value.quantityController.text.trim(),
-                  _formatWeight3(entry.value.totalNettWeight),
-                  entry.value.notesController.text.trim(),
-                ],
-              ),
-            ],
           ),
-          pw.SizedBox(height: 18),
-          pw.Row(
-            children: [
-              pw.Expanded(
-                child: pw.Container(
-                  padding: const pw.EdgeInsets.all(10),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.grey100,
-                    borderRadius: const pw.BorderRadius.all(
-                      pw.Radius.circular(6),
+        );
+      }
+
+      document.addPage(
+        pw.Page(
+          pageFormat: pageFormat,
+          margin: const pw.EdgeInsets.all(16),
+          build: (context) {
+            final tableStyle = pw.TextStyle(
+              fontSize: compactTableFontSize,
+              color: PdfColors.black,
+            );
+            final tableHeaderStyle = pw.TextStyle(
+              fontSize: compactTableFontSize,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.black,
+            );
+
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Center(
+                  child: shreeHeaderImage == null
+                      ? pw.Row(
+                          mainAxisSize: pw.MainAxisSize.min,
+                          children: [
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 6),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 12),
+                            pw.Text(
+                              'Shree :',
+                              style: pw.TextStyle(
+                                fontSize: 14,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                            pw.SizedBox(width: 12),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 6),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                          ],
+                        )
+                      : pw.Image(shreeHeaderImage, width: 116),
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    pw.Container(
+                      width: 12,
+                      height: 12,
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(color: PdfColors.black, width: 1),
+                      ),
                     ),
-                  ),
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    pw.Text(
+                      DateFormat('dd/MM/yyyy').format(DateTime.now()),
+                      style: labelStyle,
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 4),
+                pw.Center(child: pw.Text('Estimate', style: headingStyle)),
+                pw.SizedBox(height: 8),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(child: infoCell('Status', statusLabel)),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                      child: infoCell('Whatsapp Number', customerMobile),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: infoCell('Alternate Mobile', alternateMobile),
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(child: infoCell('Purity', purity)),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(child: infoCell('Making', making)),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(child: infoCell('GST', gst)),
+                  ],
+                ),
+                pw.SizedBox(height: 8),
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.grey400),
+                  columnWidths: {
+                    0: const pw.FixedColumnWidth(20),
+                    1: const pw.FixedColumnWidth(34),
+                    2: pw.FixedColumnWidth(itemNameColumnWidth),
+                    3: const pw.FixedColumnWidth(20),
+                    4: const pw.FixedColumnWidth(44),
+                    5: const pw.FlexColumnWidth(1.4),
+                  },
+                  defaultVerticalAlignment:
+                      pw.TableCellVerticalAlignment.middle,
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.grey200,
+                      ),
+                      children: [
+                        tableCell(
+                          'S No.',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Purity',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Item Name',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Qty',
+                          style: tableHeaderStyle,
+                          alignment: pw.Alignment.center,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Est. Wt',
+                          style: tableHeaderStyle,
+                          alignment: pw.Alignment.center,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Notes',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                      ],
+                    ),
+                    ...items.asMap().entries.map(
+                      (entry) => pw.TableRow(
+                        children: [
+                          tableCell('${entry.key + 1}', style: tableStyle),
+                          tableCell(
+                            entry.value.purityController.text.trim(),
+                            style: tableStyle,
+                          ),
+                          tableCell(
+                            entry.value.nameController.text.trim(),
+                            style: tableStyle,
+                          ),
+                          tableCell(
+                            entry.value.quantityController.text.trim(),
+                            style: tableStyle,
+                            alignment: pw.Alignment.center,
+                          ),
+                          tableCell(
+                            _formatWeight3(entry.value.estimatedWeight),
+                            style: tableStyle,
+                            alignment: pw.Alignment.center,
+                          ),
+                          tableCell(
+                            entry.value.notesController.text.trim(),
+                            style: tableStyle,
+                          ),
+                        ],
+                      ),
+                    ),
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.grey100,
+                      ),
+                      children: [
+                        tableCell(
+                          '',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          '',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          'Total',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          totalQuantity,
+                          style: tableHeaderStyle,
+                          alignment: pw.Alignment.center,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          _formatWeight3(
+                            items.fold<double>(
+                              0,
+                              (sum, item) => sum + item.estimatedWeight,
+                            ),
+                          ),
+                          style: tableHeaderStyle,
+                          alignment: pw.Alignment.center,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          '',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 8),
+                if (_categoryWeightEntries.isNotEmpty)
+                  pw.Row(
                     children: [
-                      pw.Text('Estimated Weight', style: valueStyle),
-                      pw.Text(totalWeight, style: valueStyle),
+                      for (final category in const [
+                        '22K',
+                        '18K',
+                        'Silver',
+                      ]) ...[
+                        pw.Expanded(
+                          child: infoCell(
+                            category,
+                            '${_formatWeight3(_categoryWeightFor(category))} gm',
+                          ),
+                        ),
+                        if (category != 'Silver') pw.SizedBox(width: 6),
+                      ],
                     ],
                   ),
+                if (_categoryWeightEntries.isNotEmpty) pw.SizedBox(height: 8),
+                pw.Row(
+                  children: [
+                    pw.Spacer(),
+                    pw.Expanded(
+                      flex: 2,
+                      child: infoCell('Estimated Weight', totalWeight),
+                    ),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          pw.SizedBox(height: 12),
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
+              ],
+            );
+          },
+        ),
+      );
+
+      return document.save();
+    } catch (error) {
+      final document = pw.Document();
+      document.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a5,
+          build: (context) => pw.Center(
             child: pw.Text(
-              'Delivery Date: $deliveryDate',
-              style: valueStyle.copyWith(fontSize: 10),
+              'Unable to generate estimate preview.\n$error',
+              textAlign: pw.TextAlign.center,
             ),
           ),
-        ],
-      ),
-    );
+        ),
+      );
 
-    return document.save();
+      return document.save();
+    }
   }
 
   Future<Uint8List> _buildShreeHeaderImage() async {

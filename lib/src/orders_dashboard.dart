@@ -11,149 +11,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     with WidgetsBindingObserver {
   static const _ordersStorageKey = 'orders_dashboard.orders';
   static const _estimateStorageKey = 'orders_dashboard.estimate';
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final List<Order> _orders = [
-    Order(
-      id: 'JW-2049',
-      customer: 'Ava Kapoor',
-      items: [
-        OrderItem(
-          name: 'Rose gold ring',
-          category: 'Ring',
-          date: DateTime.now().subtract(const Duration(hours: 3)),
-          quantity: 1,
-          bhav: 5200,
-          weight: 8.5,
-          making: 120,
-        ),
-        OrderItem(
-          name: 'Diamond accent polishing',
-          category: 'Service',
-          date: DateTime.now().subtract(const Duration(hours: 3)),
-          quantity: 1,
-          bhav: 0,
-          weight: 0,
-          making: 80,
-        ),
-      ],
-      total: 1840,
-      status: OrderStatus.preparing,
-      createdAt: DateTime.now().subtract(const Duration(minutes: 12)),
-      customerPhone: '+1 415 555 0142',
-      altCustomerPhone: '+1 415 555 0143',
-      advancePayments: [
-        AdvancePayment(
-          date: DateTime.now().subtract(const Duration(days: 2)),
-          amount: 450,
-          rate: 52.75,
-          making: 120,
-          weight: 8.5,
-        ),
-      ],
-    ),
-    Order(
-      id: 'JW-2048',
-      customer: 'Chris Mehta',
-      items: [
-        OrderItem(
-          name: 'Custom necklace',
-          category: 'Necklace',
-          date: DateTime.now().subtract(const Duration(hours: 5)),
-          quantity: 1,
-          bhav: 5400,
-          weight: 12.2,
-          making: 180,
-        ),
-        OrderItem(
-          name: 'Emerald setting',
-          category: 'Setting',
-          date: DateTime.now().subtract(const Duration(hours: 4)),
-          quantity: 1,
-          bhav: 0,
-          weight: 0,
-          making: 140,
-        ),
-      ],
-      total: 3250,
-      status: OrderStatus.outForDelivery,
-      createdAt: DateTime.now().subtract(const Duration(minutes: 25)),
-      customerPhone: '+1 415 555 0188',
-      altCustomerPhone: '+1 415 555 0199',
-      advancePayments: [
-        AdvancePayment(
-          date: DateTime.now().subtract(const Duration(days: 3)),
-          amount: 800,
-          rate: 53.1,
-          making: 180,
-          weight: 12.2,
-        ),
-        AdvancePayment(
-          date: DateTime.now().subtract(const Duration(days: 1)),
-          amount: 600,
-          rate: 54.4,
-          making: 140,
-          weight: 9.7,
-        ),
-      ],
-    ),
-    Order(
-      id: 'JW-2047',
-      customer: 'Maya Patel',
-      items: [
-        OrderItem(
-          name: 'Pearl earrings',
-          category: 'Earrings',
-          date: DateTime.now().subtract(const Duration(hours: 6)),
-          quantity: 1,
-          bhav: 0,
-          weight: 5.6,
-          making: 90,
-        ),
-        OrderItem(
-          name: 'Gift box',
-          category: 'Packaging',
-          date: DateTime.now().subtract(const Duration(hours: 6)),
-          quantity: 1,
-          bhav: 0,
-          weight: 0,
-          making: 15,
-        ),
-      ],
-      total: 980,
-      status: OrderStatus.delivered,
-      createdAt: DateTime.now().subtract(const Duration(hours: 1)),
-      customerPhone: '+1 415 555 0126',
-    ),
-    Order(
-      id: 'JW-2046',
-      customer: 'Noah Singh',
-      items: [
-        OrderItem(
-          name: "Men's bracelet",
-          category: 'Bracelet',
-          date: DateTime.now().subtract(const Duration(hours: 7)),
-          quantity: 1,
-          bhav: 4800,
-          weight: 7.1,
-          making: 110,
-        ),
-        OrderItem(
-          name: 'Engraving',
-          category: 'Service',
-          date: DateTime.now().subtract(const Duration(hours: 7)),
-          quantity: 1,
-          bhav: 0,
-          weight: 0,
-          making: 50,
-        ),
-      ],
-      total: 760,
-      status: OrderStatus.pending,
-      createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-    ),
-  ];
+  static const _legacySampleOrderIds = {
+    'JW-2046',
+    'JW-2047',
+    'JW-2048',
+    'JW-2049',
+  };
+  final List<Order> _orders = [];
 
   OrderStatus? _selectedStatus;
+  OrderSortOption _selectedOrderSort = OrderSortOption.newest;
   AppSection _selectedSection = AppSection.orders;
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _estimatePurityController = TextEditingController(
@@ -165,6 +32,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   final TextEditingController _estimateMakingController = TextEditingController(
     text: '15',
   );
+  final TextEditingController _estimateWeightRangeController =
+      TextEditingController();
   final TextEditingController _estimateCustomerNameController =
       TextEditingController();
   final TextEditingController _estimateCustomerMobileController =
@@ -187,6 +56,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
   DateTime _estimateOccasionDate = DateTime.now();
+  String? _editingOrderId;
+  DateTime? _editingOrderCreatedAt;
   String _searchQuery = '';
 
   @override
@@ -259,7 +130,35 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       });
     }
 
-    return results.toList();
+    final sortedResults = results.toList();
+    sortedResults.sort((a, b) {
+      switch (_selectedOrderSort) {
+        case OrderSortOption.newest:
+          return b.createdAt.compareTo(a.createdAt);
+        case OrderSortOption.oldest:
+          return a.createdAt.compareTo(b.createdAt);
+        case OrderSortOption.deliverySoonest:
+          final aDate = a.deliveryDate ?? DateTime(9999);
+          final bDate = b.deliveryDate ?? DateTime(9999);
+          final deliveryCompare = aDate.compareTo(bDate);
+          if (deliveryCompare != 0) {
+            return deliveryCompare;
+          }
+          return b.createdAt.compareTo(a.createdAt);
+        case OrderSortOption.deliveryLatest:
+          final aDate = a.deliveryDate ?? DateTime(0);
+          final bDate = b.deliveryDate ?? DateTime(0);
+          final deliveryCompare = bDate.compareTo(aDate);
+          if (deliveryCompare != 0) {
+            return deliveryCompare;
+          }
+          return b.createdAt.compareTo(a.createdAt);
+        case OrderSortOption.nameAZ:
+          return a.customer.toLowerCase().compareTo(b.customer.toLowerCase());
+      }
+    });
+
+    return sortedResults;
   }
 
   double get _estimateGst {
@@ -303,22 +202,85 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return DateFormat('dd/MM/yyyy').format(_estimateDeliveryDate);
   }
 
+  bool get _isEditingEstimate {
+    return _editingOrderId != null;
+  }
+
   int get _estimateTotalQuantity {
     return _estimateItems
         .where((item) => !item.isEmpty)
         .fold<int>(0, (sum, item) => sum + item.quantity);
   }
 
-  double get _estimateTotalNettWeight {
+  double get _estimateTotalEstimatedWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (sum, item) => sum + item.totalNettWeight);
+        .fold<double>(0, (sum, item) => sum + item.estimatedWeight);
+  }
+
+  List<MapEntry<String, double>> get _estimateCategoryWeightEntries {
+    const preferredOrder = ['22K', '18K', 'Silver'];
+    final totals = <String, double>{};
+
+    for (final item in _estimateItems.where((item) => !item.isEmpty)) {
+      final category = item.purityController.text.trim().isEmpty
+          ? 'Other'
+          : item.purityController.text.trim();
+      totals.update(
+        category,
+        (value) => value + item.estimatedWeight,
+        ifAbsent: () => item.estimatedWeight,
+      );
+    }
+
+    final entries = totals.entries.toList();
+    entries.sort((a, b) {
+      final aIndex = preferredOrder.indexOf(a.key);
+      final bIndex = preferredOrder.indexOf(b.key);
+      final normalizedAIndex = aIndex == -1 ? preferredOrder.length : aIndex;
+      final normalizedBIndex = bIndex == -1 ? preferredOrder.length : bIndex;
+      final orderCompare = normalizedAIndex.compareTo(normalizedBIndex);
+      if (orderCompare != 0) {
+        return orderCompare;
+      }
+      return a.key.compareTo(b.key);
+    });
+    return entries;
+  }
+
+  double _estimateCategoryWeightFor(String category) {
+    return _estimateCategoryWeightEntries
+        .firstWhere(
+          (entry) => entry.key == category,
+          orElse: () => const MapEntry('', 0),
+        )
+        .value;
+  }
+
+  String get _estimateAutoWeightRangeLabel {
+    final startWeight = _estimateTotalEstimatedWeight;
+    final endWeight = startWeight + 4;
+    return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+  }
+
+  double? get _estimateManualWeightRangeAddition {
+    final text = _estimateWeightRangeController.text.trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    return double.tryParse(text);
   }
 
   String get _estimateWeightRangeLabel {
-    final startWeight = _estimateTotalNettWeight;
-    final endWeight = startWeight + 4;
-    return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+    final startWeight = _estimateTotalEstimatedWeight;
+    final manualAddition = _estimateManualWeightRangeAddition;
+    if (manualAddition != null) {
+      final endWeight = startWeight + manualAddition;
+      return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+    }
+
+    final legacyRange = _estimateWeightRangeController.text.trim();
+    return legacyRange.isEmpty ? _estimateAutoWeightRangeLabel : legacyRange;
   }
 
   List<_EstimateItemDraft> get _sortedEstimateItems {
@@ -386,6 +348,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _estimatePurityController,
       _estimateGstController,
       _estimateMakingController,
+      _estimateWeightRangeController,
       _estimateCustomerNameController,
       _estimateCustomerMobileController,
       _estimateAlternateMobileController,
@@ -401,6 +364,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       item.purityController,
       item.quantityController,
       item.estimatedNettWeightController,
+      item.grossWeightController,
+      item.lessWeightController,
+      item.sizeController,
+      item.lengthController,
       item.notesController,
     ]) {
       controller.addListener(_schedulePersistence);
@@ -432,9 +399,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       jsonEncode({
         'selectedSection': _selectedSection.name,
         'selectedStatus': _selectedStatus?.name,
+        'selectedOrderSort': _selectedOrderSort.name,
         'purity': _estimatePurityController.text,
         'gst': _estimateGstController.text,
         'making': _estimateMakingController.text,
+        'weightRange': _estimateWeightRangeController.text,
         'customerName': _estimateCustomerNameController.text,
         'customerMobile': _estimateCustomerMobileController.text,
         'alternateMobile': _estimateAlternateMobileController.text,
@@ -442,6 +411,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         'status': _estimateStatus.name,
         'deliveryDate': _estimateDeliveryDate.toIso8601String(),
         'occasionDate': _estimateOccasionDate.toIso8601String(),
+        'editingOrderId': _editingOrderId,
+        'editingOrderCreatedAt': _editingOrderCreatedAt?.toIso8601String(),
         'items': _estimateItems.map((item) => item.toJson()).toList(),
       }),
     );
@@ -468,9 +439,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           _orders
             ..clear()
             ..addAll(
-              decodedOrders.map(
-                (order) => Order.fromJson(order as Map<String, dynamic>),
-              ),
+              decodedOrders
+                  .map((order) => Order.fromJson(order as Map<String, dynamic>))
+                  .where((order) => !_legacySampleOrderIds.contains(order.id)),
             );
         }
 
@@ -486,15 +457,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   )
                   .toList();
 
-          _selectedSection = AppSection.values.firstWhere(
-            (section) => section.name == decodedEstimate['selectedSection'],
-            orElse: () => AppSection.orders,
-          );
+          _selectedSection = AppSection.orders;
 
           final savedStatus = decodedEstimate['selectedStatus'] as String?;
           _selectedStatus = savedStatus == null
               ? null
               : _orderStatusFromName(savedStatus);
+          _selectedOrderSort = OrderSortOption.values.firstWhere(
+            (option) => option.name == decodedEstimate['selectedOrderSort'],
+            orElse: () => OrderSortOption.newest,
+          );
 
           _estimatePurityController.text =
               decodedEstimate['purity'] as String? ?? '22K';
@@ -502,6 +474,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               decodedEstimate['gst'] as String? ?? '3';
           _estimateMakingController.text =
               decodedEstimate['making'] as String? ?? '15';
+          _estimateWeightRangeController.text =
+              decodedEstimate['weightRange'] as String? ?? '';
           _estimateCustomerNameController.text =
               decodedEstimate['customerName'] as String? ?? '';
           _estimateCustomerMobileController.text =
@@ -514,15 +488,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
           );
           _estimateDeliveryDate =
-              DateTime.tryParse(
-                decodedEstimate['deliveryDate'] as String? ?? '',
-              ) ??
+              _dateTimeFromJson(decodedEstimate['deliveryDate']) ??
               DateTime.now();
           _estimateOccasionDate =
-              DateTime.tryParse(
-                decodedEstimate['occasionDate'] as String? ?? '',
-              ) ??
+              _dateTimeFromJson(decodedEstimate['occasionDate']) ??
               DateTime.now();
+          _editingOrderId = decodedEstimate['editingOrderId'] as String?;
+          _editingOrderCreatedAt = _dateTimeFromJson(
+            decodedEstimate['editingOrderCreatedAt'],
+          );
           _showEstimateNameError = false;
           _showEstimateMobileError = false;
           _showEstimateAlternateMobileError = false;
@@ -547,238 +521,291 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   void _openAddOrderSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return _OrderFormSheet(
-          onSave: (order) {
-            setState(() {
-              _orders.insert(0, order);
-            });
-            _schedulePersistence();
-          },
-        );
-      },
-    );
+    setState(() {
+      _clearEstimateForm();
+      _selectedSection = AppSection.estimateCalculator;
+    });
+    _schedulePersistence();
   }
 
   void _openEditOrderSheet(Order order) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return _OrderFormSheet(
-          initialOrder: order,
-          onSave: (updated) {
-            setState(() {
-              final index = _orders.indexWhere((item) => item.id == order.id);
-              if (index != -1) {
-                _orders[index] = updated;
-              }
-            });
-            _schedulePersistence();
-          },
-        );
-      },
+    setState(() {
+      _loadEstimateFromOrder(order);
+      _selectedSection = AppSection.estimateCalculator;
+    });
+    _schedulePersistence();
+  }
+
+  void _clearEstimateForm() {
+    _editingOrderId = null;
+    _editingOrderCreatedAt = null;
+    _estimateDate = DateTime.now();
+    _estimateDeliveryDate = DateTime.now();
+    _estimateOccasionDate = DateTime.now();
+    _estimatePurityController.text = '22K';
+    _estimateGstController.text = '3';
+    _estimateMakingController.text = '15';
+    _estimateWeightRangeController.clear();
+    _estimateCustomerNameController.clear();
+    _estimateCustomerMobileController.clear();
+    _estimateAlternateMobileController.clear();
+    _estimateOccasionController.clear();
+    _showEstimateNameError = false;
+    _showEstimateMobileError = false;
+    _showEstimateAlternateMobileError = false;
+    _estimateStatus = OrderStatus.pending;
+
+    for (final item in _estimateItems) {
+      item.dispose();
+    }
+    _estimateItems
+      ..clear()
+      ..add(_EstimateItemDraft());
+    _attachEstimateItemListeners(_estimateItems.first);
+  }
+
+  void _loadEstimateFromOrder(Order order) {
+    _editingOrderId = order.id;
+    _editingOrderCreatedAt = order.createdAt;
+    _estimateDate = DateTime.now();
+    _estimateDeliveryDate = order.deliveryDate ?? DateTime.now();
+    _estimateOccasionDate = order.occasionDate ?? DateTime.now();
+    _estimatePurityController.text = order.estimatePurity ?? '22K';
+    _estimateGstController.text = (order.estimateGst ?? 3).toString();
+    _estimateMakingController.text = (order.estimateMaking ?? 15).toString();
+    _estimateWeightRangeController.text = order.estimateWeightRange ?? '';
+    _estimateCustomerNameController.text = order.customer;
+    _estimateCustomerMobileController.text = order.customerPhone ?? '';
+    _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
+    _estimateOccasionController.text = order.occasion ?? '';
+    _showEstimateNameError = false;
+    _showEstimateMobileError = false;
+    _showEstimateAlternateMobileError = false;
+    _estimateStatus = order.status;
+
+    for (final item in _estimateItems) {
+      item.dispose();
+    }
+    _estimateItems
+      ..clear()
+      ..addAll(
+        order.items.isEmpty
+            ? [_EstimateItemDraft()]
+            : order.items
+                  .map(
+                    (item) => _EstimateItemDraft(
+                      name: item.name,
+                      purity: item.purity ?? order.estimatePurity ?? '22K',
+                      quantity: item.quantity,
+                      estimatedNettWeight: item.estimatedWeight ?? item.weight,
+                      grossWeight: item.grossWeight,
+                      lessWeight: item.lessWeight,
+                      size: item.size,
+                      length: item.length,
+                      notes: item.notes ?? '',
+                    ),
+                  )
+                  .toList(),
+      );
+    for (final item in _estimateItems) {
+      _attachEstimateItemListeners(item);
+    }
+  }
+
+  bool _validateEstimateForm() {
+    setState(() {
+      _showEstimateNameError = true;
+      _showEstimateMobileError = true;
+      _showEstimateAlternateMobileError = true;
+      for (final item in _estimateItems) {
+        item.showNameError = true;
+        item.showQuantityError = true;
+        item.showWeightError = true;
+      }
+    });
+
+    final hasTopLevelError =
+        _estimateNameError != null ||
+        _estimateMobileError != null ||
+        _estimateAlternateMobileError != null;
+    final hasItemError = _estimateItems.any(
+      (item) =>
+          !item.isEmpty &&
+          (item.nameError != null ||
+              item.quantityError != null ||
+              item.weightError != null),
+    );
+    return !hasTopLevelError && !hasItemError;
+  }
+
+  void _saveEstimateOrder() {
+    final populatedItems = _estimateItems
+        .where((item) => !item.isEmpty)
+        .toList();
+    if (!_validateEstimateForm()) {
+      return;
+    }
+
+    if (populatedItems.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Add at least one item')));
+      return;
+    }
+
+    final order = Order(
+      id:
+          _editingOrderId ??
+          'JW-${DateTime.now().millisecondsSinceEpoch % 100000}',
+      customer: _estimateCustomerNameController.text.trim(),
+      items: populatedItems
+          .map(
+            (item) => OrderItem(
+              name: item.nameController.text.trim(),
+              category: '',
+              date: _estimateDate,
+              quantity: item.quantity,
+              bhav: 0,
+              weight: item.estimatedWeight,
+              making: 0,
+              purity: item.purityController.text.trim(),
+              estimatedWeight: item.estimatedWeight,
+              grossWeight: item.grossWeight > 0 ? item.grossWeight : null,
+              lessWeight: item.lessWeight > 0 ? item.lessWeight : null,
+              netWeight: item.hasActualWeight ? item.actualNetWeight : null,
+              size: item.sizeController.text.trim().isEmpty
+                  ? null
+                  : item.sizeController.text.trim(),
+              length: item.lengthController.text.trim().isEmpty
+                  ? null
+                  : item.lengthController.text.trim(),
+              notes: item.notesController.text.trim().isEmpty
+                  ? null
+                  : item.notesController.text.trim(),
+            ),
+          )
+          .toList(),
+      total: 0,
+      status: _estimateStatus,
+      createdAt: _editingOrderCreatedAt ?? DateTime.now(),
+      customerPhone: _estimateCustomerMobileController.text.trim(),
+      altCustomerPhone: _estimateAlternateMobileController.text.trim().isEmpty
+          ? null
+          : _estimateAlternateMobileController.text.trim(),
+      estimatePurity: _estimatePurityController.text.trim(),
+      estimateGst: _estimateGst,
+      estimateMaking: _estimateMaking,
+      estimateWeightRange: _estimateWeightRangeController.text.trim().isEmpty
+          ? null
+          : _estimateWeightRangeController.text.trim(),
+      occasion: _estimateOccasionController.text.trim().isEmpty
+          ? null
+          : _estimateOccasionController.text.trim(),
+      occasionDate: _estimateOccasionDate,
+      deliveryDate: _estimateDeliveryDate,
+    );
+
+    final isEditing = _isEditingEstimate;
+    setState(() {
+      final existingIndex = _orders.indexWhere((item) => item.id == order.id);
+      if (existingIndex == -1) {
+        _orders.insert(0, order);
+      } else {
+        _orders[existingIndex] = order;
+      }
+      _clearEstimateForm();
+      _selectedSection = AppSection.orders;
+      _selectedStatus = null;
+    });
+    _schedulePersistence();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(isEditing ? 'Order updated' : 'Order created')),
     );
   }
 
-  void _openViewOrder(Order order) {
-    showModalBottomSheet<void>(
+  Future<void> _confirmDeleteOrder(Order order) async {
+    final shouldDelete = await showDialog<bool>(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        final totalWeight = order.items.fold<double>(
-          0,
-          (sum, item) => sum + item.weight,
-        );
-        final totalAdvance = order.advancePayments.fold<double>(
-          0,
-          (sum, payment) => sum + payment.amount,
-        );
-
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(context).viewInsets.bottom,
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 24,
-                      backgroundColor: order.status
-                          .color(context)
-                          .withAlpha(38),
-                      backgroundImage:
-                          order.customerPhotoPath != null &&
-                              order.customerPhotoPath!.trim().isNotEmpty
-                          ? FileImage(File(order.customerPhotoPath!))
-                          : null,
-                      child:
-                          (order.customerPhotoPath != null &&
-                              order.customerPhotoPath!.trim().isNotEmpty)
-                          ? null
-                          : Text(
-                              order.customer.substring(0, 1),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: order.status.color(context),
-                              ),
-                            ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            order.customer,
-                            style: Theme.of(context).textTheme.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Order ID: ${order.id}',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    _StatusPill(status: order.status),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _DetailChip(
-                      label: 'Created',
-                      value: _formatEntryDate(order.createdAt),
-                    ),
-                    _DetailChip(
-                      label: 'Total',
-                      value: _formatCurrency(order.total),
-                    ),
-                    _DetailChip(
-                      label: 'Advance',
-                      value: _formatCurrency(totalAdvance),
-                    ),
-                    _DetailChip(
-                      label: 'Weight',
-                      value: '${_formatWeight3(totalWeight)} g',
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if ((order.customerPhone ?? '').trim().isNotEmpty ||
-                    (order.altCustomerPhone ?? '').trim().isNotEmpty) ...[
-                  Text(
-                    'Contact',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if ((order.customerPhone ?? '').trim().isNotEmpty)
-                    Text(order.customerPhone!),
-                  if ((order.altCustomerPhone ?? '').trim().isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(order.altCustomerPhone!),
-                    ),
-                  const SizedBox(height: 16),
-                ],
-                Text(
-                  'Items',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                ...order.items.map(
-                  (item) => Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      title: Text(item.name),
-                      subtitle: Text(
-                        '${item.category} • Qty ${item.quantity} • ${_formatWeight3(item.weight)} g',
-                      ),
-                      trailing: Text(_formatCurrency(item.making)),
-                    ),
-                  ),
-                ),
-                if (order.advancePayments.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Advance payments',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ...order.advancePayments.map(
-                    (payment) => Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        title: Text(_formatCurrency(payment.amount)),
-                        subtitle: Text(
-                          '${_formatEntryDate(payment.date)} • Rate ${payment.rate.toStringAsFixed(2)} • Making ${payment.making.toStringAsFixed(2)}%',
-                        ),
-                        trailing: Text('${_formatWeight3(payment.weight)} g'),
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.print_outlined),
-                        label: const Text('Print'),
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Print coming soon')),
-                          );
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: FilledButton.icon(
-                        icon: const Icon(Icons.edit_outlined),
-                        label: const Text('Edit order'),
-                        onPressed: () {
-                          Navigator.of(context).pop();
-                          _openEditOrderSheet(order);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Delete order?'),
+          content: Text('Remove ${order.customer} from your orders list?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
             ),
-          ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.error,
+                foregroundColor: Theme.of(context).colorScheme.onError,
+              ),
+              child: const Text('Delete'),
+            ),
+          ],
         );
       },
     );
+
+    if (shouldDelete != true) {
+      return;
+    }
+
+    final previousIndex = _orders.indexWhere((item) => item.id == order.id);
+    final wasEditingOrder = _editingOrderId == order.id;
+
+    setState(() {
+      _orders.removeWhere((item) => item.id == order.id);
+      if (wasEditingOrder) {
+        _clearEstimateForm();
+        _selectedSection = AppSection.orders;
+        _selectedStatus = null;
+      }
+    });
+    _schedulePersistence();
+
+    if (!mounted) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    var wasUndone = false;
+    final controller = messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 3),
+        content: const Text('Order deleted'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () {
+            wasUndone = true;
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              final insertIndex =
+                  previousIndex >= 0 && previousIndex <= _orders.length
+                  ? previousIndex
+                  : _orders.length;
+              _orders.insert(insertIndex, order);
+            });
+            _schedulePersistence();
+          },
+        ),
+      ),
+    );
+
+    await controller.closed;
+    if (!mounted || wasUndone || !wasEditingOrder) {
+      return;
+    }
+
+    setState(() {
+      _selectedSection = AppSection.orders;
+      _selectedStatus = null;
+    });
+    _schedulePersistence();
   }
 
   void _openPrintPreview() {
@@ -823,52 +850,18 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
-  void _selectSection(AppSection section) {
-    Navigator.of(context).pop();
-    if (_selectedSection == section) {
-      return;
-    }
-
-    setState(() {
-      _selectedSection = section;
-    });
-    _schedulePersistence();
+  bool _stepBackOrdersTab() {
+    return false;
   }
 
   void _resetEstimateForm() {
     setState(() {
-      _estimateDate = DateTime.now();
-      _estimateDeliveryDate = DateTime.now();
-      _estimateOccasionDate = DateTime.now();
-      _estimatePurityController.text = '22K';
-      _estimateGstController.text = '3';
-      _estimateMakingController.text = '15';
-      _estimateCustomerNameController.clear();
-      _estimateCustomerMobileController.clear();
-      _estimateAlternateMobileController.clear();
-      _estimateOccasionController.clear();
-      _showEstimateNameError = false;
-      _showEstimateMobileError = false;
-      _showEstimateAlternateMobileError = false;
-      _estimateStatus = OrderStatus.pending;
-
-      for (final item in _estimateItems) {
-        item.dispose();
-      }
-      _estimateItems
-        ..clear()
-        ..add(_EstimateItemDraft());
-      _attachEstimateItemListeners(_estimateItems.first);
+      _clearEstimateForm();
     });
     _schedulePersistence();
   }
 
   Future<bool> _confirmExitApp() async {
-    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
-      Navigator.of(context).pop();
-      return false;
-    }
-
     final shouldExit = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
@@ -898,54 +891,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return shouldExit ?? false;
   }
 
-  Widget _buildDrawer(BuildContext context) {
-    return Drawer(
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            DrawerHeader(
-              margin: EdgeInsets.zero,
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Image.asset('assets/logo.png', height: 40, width: 40),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Jewellery Orders',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Navigate between orders and tools.',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
-              title: const Text('Orders'),
-              selected: _selectedSection == AppSection.orders,
-              onTap: () => _selectSection(AppSection.orders),
-            ),
-            ListTile(
-              leading: const Icon(Icons.calculate_outlined),
-              title: const Text('Estimate Calculator'),
-              selected: _selectedSection == AppSection.estimateCalculator,
-              onTap: () => _selectSection(AppSection.estimateCalculator),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildOrdersBody(double contentTopPadding) {
     return SafeArea(
       child: SingleChildScrollView(
@@ -953,36 +898,87 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                labelText: 'Search by customer or mobile',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          setState(() {
-                            _searchController.clear();
-                            _searchQuery = '';
-                          });
-                        },
-                        tooltip: 'Clear search',
-                      ),
-              ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Name / Mobile',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                setState(() {
+                                  _searchController.clear();
+                                  _searchQuery = '';
+                                });
+                              },
+                              tooltip: 'Clear search',
+                            ),
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: DropdownButtonFormField<OrderSortOption>(
+                    initialValue: _selectedOrderSort,
+                    decoration: const InputDecoration(
+                      labelText: 'Sort',
+                      isDense: true,
+                    ),
+                    isExpanded: true,
+                    selectedItemBuilder: (context) {
+                      return OrderSortOption.values
+                          .map(
+                            (option) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Sort',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList();
+                    },
+                    items: OrderSortOption.values
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(
+                              option.label,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedOrderSort = value;
+                      });
+                      _schedulePersistence();
+                    },
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Text('Live orders', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
-            if (_filteredOrders.isEmpty)
-              _EmptyState(onAdd: _openAddOrderSheet)
-            else
+            if (_filteredOrders.isNotEmpty) ...[
+              const SizedBox(height: 12),
               ListView.separated(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -993,10 +989,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   final order = _filteredOrders[index];
                   return _OrderCard(
                     order: order,
-                    onView: () => _openViewOrder(order),
+                    onEdit: () => _openEditOrderSheet(order),
+                    onDelete: () => _confirmDeleteOrder(order),
                   );
                 },
               ),
+            ],
           ],
         ),
       ),
@@ -1024,6 +1022,19 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                               'dd/MM/yy HH:mm:ss',
                             ).format(_estimateDate),
                             style: Theme.of(context).textTheme.bodyLarge,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _DateField(
+                            date: _estimateDeliveryDate,
+                            labelText: 'Delivery Date',
+                            onDateSelected: (selected) {
+                              setState(() {
+                                _estimateDeliveryDate = selected;
+                              });
+                              _schedulePersistence();
+                            },
                           ),
                         ),
                       ],
@@ -1247,39 +1258,22 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ),
             ),
             const SizedBox(height: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Delivery Date',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 6),
-                _DateField(
-                  date: _estimateDeliveryDate,
-                  onDateSelected: (selected) {
-                    setState(() {
-                      _estimateDeliveryDate = selected;
-                    });
-                    _schedulePersistence();
-                  },
-                ),
+            TextField(
+              controller: _estimateWeightRangeController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
               ],
+              decoration: InputDecoration(
+                labelText: 'Estimated Weight Range',
+                hintText: 'Add extra weight, e.g. 2.080',
+                suffixText: 'gm',
+              ),
+              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: _resetEstimateForm,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
-                icon: const Icon(Icons.restart_alt),
-                label: const Text('Reset'),
-              ),
-            ),
-            const SizedBox(height: 8),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -1409,19 +1403,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                 color: Colors.grey.shade200,
                               ),
                               children: const [
-                                _EstimateTableCell('S No', isHeader: true),
+                                _EstimateTableCell('S No.', isHeader: true),
                                 _EstimateTableCell('Purity', isHeader: true),
                                 _EstimateTableCell('Item Name', isHeader: true),
                                 _EstimateTableCell('Qty', isHeader: true),
                                 _EstimateTableCell(
-                                  'Weight (gm)',
+                                  'Est. Weight',
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
-                                _EstimateTableCell(
-                                  'Notes / Instructions',
-                                  isHeader: true,
-                                ),
+                                _EstimateTableCell('Notes', isHeader: true),
                               ],
                             ),
                             ..._sortedEstimateItems.asMap().entries.map(
@@ -1438,7 +1429,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                     entry.value.quantityController.text.trim(),
                                   ),
                                   _EstimateTableCell(
-                                    _formatWeight3(entry.value.totalNettWeight),
+                                    _formatWeight3(entry.value.estimatedWeight),
                                     textAlign: TextAlign.right,
                                   ),
                                   _EstimateTableCell(
@@ -1463,7 +1454,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                   isHeader: true,
                                 ),
                                 _EstimateTableCell(
-                                  _formatWeight3(_estimateTotalNettWeight),
+                                  _formatWeight3(_estimateTotalEstimatedWeight),
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
@@ -1481,6 +1472,52 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       ),
                     ],
                     const SizedBox(height: 12),
+                    if (_estimateCategoryWeightEntries.isNotEmpty) ...[
+                      Text(
+                        'Estimated Weight By Category',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          for (final category in const [
+                            '22K',
+                            '18K',
+                            'Silver',
+                          ]) ...[
+                            Expanded(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withAlpha(10),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withAlpha(28),
+                                  ),
+                                ),
+                                child: Text(
+                                  '$category: ${_formatWeight3(_estimateCategoryWeightFor(category))} gm',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(context).textTheme.bodyMedium
+                                      ?.copyWith(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ),
+                            if (category != 'Silver') const SizedBox(width: 8),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Divider(color: Colors.grey.shade300, height: 1),
                     const SizedBox(height: 12),
                     _EstimateSummaryRow(
@@ -1491,7 +1528,149 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 ),
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _saveEstimateOrder,
+                    icon: const Icon(Icons.save_outlined),
+                    label: Text(
+                      _isEditingEstimate ? 'Update Order' : 'Save Order',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _resetEstimateForm,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.onError,
+                    ),
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Reset'),
+                  ),
+                ),
+              ],
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActualBody(double contentTopPadding) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Actual',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This section is ready for actual item entry next.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAdvanceBody(double contentTopPadding) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Advance',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This section is ready for advance entries next.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItemsBody(double contentTopPadding) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Items',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This section is ready for item management next.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBillPreviewBody(double contentTopPadding) {
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Bill Preview',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'This section is ready for bill preview work next.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1506,6 +1685,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimatePurityController.dispose();
     _estimateGstController.dispose();
     _estimateMakingController.dispose();
+    _estimateWeightRangeController.dispose();
     _estimateCustomerNameController.dispose();
     _estimateCustomerMobileController.dispose();
     _estimateAlternateMobileController.dispose();
@@ -1521,16 +1701,27 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   @override
   Widget build(BuildContext context) {
-    final statuses = OrderStatus.values;
-    final selectedIndex = _selectedStatus == null
-        ? 0
-        : statuses.indexOf(_selectedStatus!) + 1;
     final contentTopPadding = MediaQuery.of(context).padding.top + 16;
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) {
+          return;
+        }
+        final currentRoute = ModalRoute.of(context);
+        if (currentRoute?.isCurrent != true) {
+          return;
+        }
+        if (_selectedSection != AppSection.orders) {
+          setState(() {
+            _selectedSection = AppSection.orders;
+            _selectedStatus = null;
+          });
+          _schedulePersistence();
+          return;
+        }
+        if (_stepBackOrdersTab()) {
           return;
         }
         final shouldExit = await _confirmExitApp();
@@ -1541,9 +1732,20 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         }
       },
       child: Scaffold(
-        key: _scaffoldKey,
-        drawer: _buildDrawer(context),
         appBar: AppBar(
+          leading: _selectedSection != AppSection.orders
+              ? IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedSection = AppSection.orders;
+                      _selectedStatus = null;
+                    });
+                    _schedulePersistence();
+                  },
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Back to orders',
+                )
+              : null,
           title: Row(
             children: [
               Image.asset(
@@ -1554,21 +1756,33 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 color: Theme.of(context).colorScheme.onPrimary,
               ),
               const SizedBox(width: 12),
-              Text(
-                _selectedSection == AppSection.orders
-                    ? 'Orders'
-                    : 'Estimate Calculator',
-              ),
+              Text(switch (_selectedSection) {
+                AppSection.orders => 'Orders',
+                AppSection.estimateCalculator =>
+                  (_isEditingEstimate ? 'Edit Order' : 'New Order'),
+                AppSection.advance => 'Advance',
+                AppSection.actual => 'Actual',
+                AppSection.items => 'Items',
+                AppSection.billPreview => 'Bill Preview',
+              }),
             ],
           ),
           actions: [
-            IconButton(
-              onPressed: _selectedSection == AppSection.orders
-                  ? _openPrintPreview
-                  : _openEstimatePrintPreview,
-              icon: const Icon(Icons.print_outlined),
-              tooltip: 'Print preview',
-            ),
+            if (_selectedSection == AppSection.estimateCalculator)
+              IconButton(
+                onPressed: _saveEstimateOrder,
+                icon: const Icon(Icons.save_outlined),
+                tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+              ),
+            if (_selectedSection == AppSection.orders ||
+                _selectedSection == AppSection.estimateCalculator)
+              IconButton(
+                onPressed: _selectedSection == AppSection.orders
+                    ? _openPrintPreview
+                    : _openEstimatePrintPreview,
+                icon: const Icon(Icons.print_outlined),
+                tooltip: 'Print preview',
+              ),
           ],
         ),
         floatingActionButton: _selectedSection == AppSection.orders
@@ -1578,32 +1792,58 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 label: const Text('New order'),
               )
             : null,
-        bottomNavigationBar: _selectedSection == AppSection.orders
-            ? NavigationBar(
-                selectedIndex: selectedIndex,
-                onDestinationSelected: (index) {
-                  setState(() {
-                    _selectedStatus = index == 0 ? null : statuses[index - 1];
-                  });
-                  _schedulePersistence();
-                },
-                destinations: [
-                  const NavigationDestination(
-                    icon: Icon(Icons.all_inbox_outlined),
-                    label: 'All',
-                  ),
-                  ...statuses.map(
-                    (status) => NavigationDestination(
-                      icon: Icon(status.icon),
-                      label: status.label,
-                    ),
-                  ),
-                ],
-              )
-            : null,
-        body: _selectedSection == AppSection.orders
-            ? _buildOrdersBody(contentTopPadding)
-            : _buildEstimateCalculatorBody(contentTopPadding),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _selectedSection.index,
+          onDestinationSelected: (index) {
+            final nextSection = AppSection.values[index];
+            if (_selectedSection == nextSection) {
+              return;
+            }
+            setState(() {
+              _selectedSection = nextSection;
+              if (nextSection == AppSection.orders) {
+                _selectedStatus = null;
+              }
+            });
+            _schedulePersistence();
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              label: 'Orders',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.calculate_outlined),
+              label: 'Estimate',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.account_balance_wallet_outlined),
+              label: 'Advance',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.scale_outlined),
+              label: 'Actual',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.inventory_2_outlined),
+              label: 'Items',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.receipt_long_outlined),
+              label: 'Bill Preview',
+            ),
+          ],
+        ),
+        body: switch (_selectedSection) {
+          AppSection.orders => _buildOrdersBody(contentTopPadding),
+          AppSection.estimateCalculator => _buildEstimateCalculatorBody(
+            contentTopPadding,
+          ),
+          AppSection.advance => _buildAdvanceBody(contentTopPadding),
+          AppSection.actual => _buildActualBody(contentTopPadding),
+          AppSection.items => _buildItemsBody(contentTopPadding),
+          AppSection.billPreview => _buildBillPreviewBody(contentTopPadding),
+        },
       ),
     );
   }
@@ -1615,9 +1855,15 @@ class _EstimateItemDraft {
     String? purity,
     int? quantity,
     double? estimatedNettWeight,
+    double? grossWeight,
+    double? lessWeight,
+    String? size,
+    String? length,
     String? notes,
     String? quantityText,
     String? estimatedNettWeightText,
+    String? grossWeightText,
+    String? lessWeightText,
   }) : nameController = TextEditingController(text: name ?? ''),
        purityController = TextEditingController(text: purity ?? '22K'),
        quantityController = TextEditingController(
@@ -1627,6 +1873,14 @@ class _EstimateItemDraft {
          text:
              estimatedNettWeightText ?? (estimatedNettWeight?.toString() ?? ''),
        ),
+       grossWeightController = TextEditingController(
+         text: grossWeightText ?? (grossWeight?.toString() ?? ''),
+       ),
+       lessWeightController = TextEditingController(
+         text: lessWeightText ?? (lessWeight?.toString() ?? ''),
+       ),
+       sizeController = TextEditingController(text: size ?? ''),
+       lengthController = TextEditingController(text: length ?? ''),
        notesController = TextEditingController(text: notes ?? '');
 
   factory _EstimateItemDraft.fromJson(Map<String, dynamic> json) {
@@ -1635,6 +1889,10 @@ class _EstimateItemDraft {
       purity: json['purity'] as String? ?? '22K',
       quantityText: json['quantityText'] as String? ?? '1',
       estimatedNettWeightText: json['estimatedNettWeightText'] as String? ?? '',
+      grossWeightText: json['grossWeightText'] as String? ?? '',
+      lessWeightText: json['lessWeightText'] as String? ?? '',
+      size: json['size'] as String? ?? '',
+      length: json['length'] as String? ?? '',
       notes: json['notes'] as String? ?? '',
     );
   }
@@ -1643,6 +1901,10 @@ class _EstimateItemDraft {
   final TextEditingController purityController;
   final TextEditingController quantityController;
   final TextEditingController estimatedNettWeightController;
+  final TextEditingController grossWeightController;
+  final TextEditingController lessWeightController;
+  final TextEditingController sizeController;
+  final TextEditingController lengthController;
   final TextEditingController notesController;
   bool showNameError = false;
   bool showQuantityError = false;
@@ -1650,8 +1912,12 @@ class _EstimateItemDraft {
 
   bool get isEmpty =>
       nameController.text.trim().isEmpty &&
+      sizeController.text.trim().isEmpty &&
+      lengthController.text.trim().isEmpty &&
       notesController.text.trim().isEmpty &&
-      (double.tryParse(estimatedNettWeightController.text.trim()) ?? 0) == 0;
+      estimatedWeight == 0 &&
+      grossWeight == 0 &&
+      lessWeight == 0;
 
   String? get nameError {
     if (!showNameError) {
@@ -1690,21 +1956,44 @@ class _EstimateItemDraft {
       'purity': purityController.text,
       'quantityText': quantityController.text,
       'estimatedNettWeightText': estimatedNettWeightController.text,
+      'grossWeightText': grossWeightController.text,
+      'lessWeightText': lessWeightController.text,
+      'size': sizeController.text,
+      'length': lengthController.text,
       'notes': notesController.text,
     };
   }
 
   int get quantity => int.tryParse(quantityController.text.trim()) ?? 0;
 
-  double get totalNettWeight {
+  double get estimatedWeight {
     return double.tryParse(estimatedNettWeightController.text.trim()) ?? 0;
   }
+
+  double get grossWeight {
+    return double.tryParse(grossWeightController.text.trim()) ?? 0;
+  }
+
+  double get lessWeight {
+    return double.tryParse(lessWeightController.text.trim()) ?? 0;
+  }
+
+  double get actualNetWeight {
+    final net = grossWeight - lessWeight;
+    return net > 0 ? net : 0;
+  }
+
+  bool get hasActualWeight => grossWeight > 0 || lessWeight > 0;
 
   void dispose() {
     nameController.dispose();
     purityController.dispose();
     quantityController.dispose();
     estimatedNettWeightController.dispose();
+    grossWeightController.dispose();
+    lessWeightController.dispose();
+    sizeController.dispose();
+    lengthController.dispose();
     notesController.dispose();
   }
 }
@@ -1763,6 +2052,7 @@ class _EstimateItemEditor extends StatelessWidget {
                     },
                     child: TextField(
                       controller: item.nameController,
+                      inputFormatters: [_WordCapitalizeFormatter()],
                       decoration: InputDecoration(
                         labelText: 'Item Name',
                         errorText: item.nameError,
@@ -1832,7 +2122,7 @@ class _EstimateItemEditor extends StatelessWidget {
                         decimal: true,
                       ),
                       decoration: InputDecoration(
-                        labelText: 'Weight',
+                        labelText: 'Estimated Weight',
                         suffixText: 'g',
                         errorText: item.weightError,
                       ),
@@ -1885,47 +2175,9 @@ class _EstimateTableCell extends StatelessWidget {
         text,
         textAlign: textAlign,
         style: style,
-        maxLines: 1,
-        softWrap: false,
+        maxLines: isHeader ? 2 : 1,
+        softWrap: isHeader,
         overflow: TextOverflow.visible,
-      ),
-    );
-  }
-}
-
-class _DetailChip extends StatelessWidget {
-  const _DetailChip({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ],
       ),
     );
   }
