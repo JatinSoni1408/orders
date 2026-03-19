@@ -1102,6 +1102,30 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
+  void _openActualPrintPreview() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) {
+          return _ActualPrintPreviewSheet(
+            customerName: _estimateCustomerName,
+            customerMobile: _estimateCustomerMobile,
+            alternateMobile: _estimateAlternateMobile,
+            statusLabel: _estimateStatus.label,
+            deliveryDate: _estimateDeliveryDateLabel,
+            purity: _estimatePurity,
+            making: _estimateMaking.toStringAsFixed(2),
+            gst: '${_estimateGst.toStringAsFixed(2)}%',
+            totalQuantity: _estimateTotalQuantity.toString(),
+            totalGrossWeight: _formatWeightFixed3(_actualTotalGrossWeight),
+            totalLessWeight: _formatWeightFixed3(_actualTotalLessWeight),
+            totalNetWeight: _formatWeightFixed3(_actualTotalNetWeight),
+            items: _sortedEstimateItems,
+          );
+        },
+      ),
+    );
+  }
+
   bool _stepBackOrdersTab() {
     return false;
   }
@@ -2283,7 +2307,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                     entry.value.quantityController.text.trim(),
                                   ),
                                   _EstimateTableCell(
-                                    _formatWeight3(entry.value.grossWeight),
+                                    _formatWeightFixed3(
+                                      entry.value.grossWeight,
+                                    ),
                                     textAlign: TextAlign.right,
                                   ),
                                   _EstimateTableCell(
@@ -2318,7 +2344,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                   isHeader: true,
                                 ),
                                 _EstimateTableCell(
-                                  _formatWeight3(_actualTotalGrossWeight),
+                                  _formatWeightFixed3(_actualTotalGrossWeight),
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
@@ -2730,12 +2756,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ),
             if (_selectedSection == AppSection.orders ||
                 _selectedSection == AppSection.estimateCalculator ||
-                _selectedSection == AppSection.advance)
+                _selectedSection == AppSection.advance ||
+                _selectedSection == AppSection.actual)
               IconButton(
                 onPressed: switch (_selectedSection) {
                   AppSection.orders => _openPrintPreview,
                   AppSection.estimateCalculator => _openEstimatePrintPreview,
                   AppSection.advance => _openAdvancePrintPreview,
+                  AppSection.actual => _openActualPrintPreview,
                   _ => _openPrintPreview,
                 },
                 icon: const Icon(Icons.print_outlined),

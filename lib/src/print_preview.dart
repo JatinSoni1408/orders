@@ -1081,3 +1081,384 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
     return document.save();
   }
 }
+
+class _ActualPrintPreviewSheet extends StatelessWidget {
+  const _ActualPrintPreviewSheet({
+    required this.customerName,
+    required this.customerMobile,
+    required this.alternateMobile,
+    required this.statusLabel,
+    required this.deliveryDate,
+    required this.purity,
+    required this.making,
+    required this.gst,
+    required this.totalQuantity,
+    required this.totalGrossWeight,
+    required this.totalLessWeight,
+    required this.totalNetWeight,
+    required this.items,
+  });
+
+  final String customerName;
+  final String customerMobile;
+  final String alternateMobile;
+  final String statusLabel;
+  final String deliveryDate;
+  final String purity;
+  final String making;
+  final String gst;
+  final String totalQuantity;
+  final String totalGrossWeight;
+  final String totalLessWeight;
+  final String totalNetWeight;
+  final List<_EstimateItemDraft> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: const Text('Actual PDF Preview'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: PdfPreview(
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowSharing: false,
+                  pdfFileName: 'actual-preview.pdf',
+                  build: _buildActualPdf,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<Uint8List> _buildActualPdf(PdfPageFormat format) async {
+    final document = pw.Document();
+    final actualItems = items.where((item) => !item.isEmpty).toList();
+
+    final longestItemNameLength = actualItems.fold<int>(0, (maxLength, item) {
+      final currentLength = item.nameController.text.trim().length;
+      return currentLength > maxLength ? currentLength : maxLength;
+    });
+    var itemNameColumnWidth = 56.0 + (longestItemNameLength * 2.2);
+    if (itemNameColumnWidth < 72) {
+      itemNameColumnWidth = 72;
+    } else if (itemNameColumnWidth > 118) {
+      itemNameColumnWidth = 118;
+    }
+
+    document.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a5,
+        margin: const pw.EdgeInsets.all(16),
+        build: (context) {
+          final headingStyle = pw.TextStyle(
+            fontSize: 14,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+          final labelStyle = pw.TextStyle(
+            fontSize: 8,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+          final valueStyle = pw.TextStyle(
+            fontSize: 8.4,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+          final tableStyle = const pw.TextStyle(
+            fontSize: 8.2,
+            color: PdfColors.black,
+          );
+          final tableHeaderStyle = pw.TextStyle(
+            fontSize: 8.2,
+            fontWeight: pw.FontWeight.bold,
+            color: PdfColors.black,
+          );
+
+          pw.Widget infoCell(String label, String value) {
+            return pw.Container(
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 4,
+              ),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: PdfColors.grey300),
+                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(label, style: labelStyle),
+                  pw.SizedBox(height: 2),
+                  pw.Text(value, style: valueStyle, maxLines: 1),
+                ],
+              ),
+            );
+          }
+
+          pw.Widget tableCell(
+            String text, {
+            required pw.TextStyle style,
+            pw.Alignment alignment = pw.Alignment.centerLeft,
+            PdfColor? backgroundColor,
+          }) {
+            return pw.Container(
+              alignment: alignment,
+              color: backgroundColor,
+              padding: const pw.EdgeInsets.symmetric(
+                horizontal: 4,
+                vertical: 4,
+              ),
+              child: pw.Text(
+                text.isEmpty ? ' ' : text,
+                style: style,
+                maxLines: 1,
+                textAlign: alignment == pw.Alignment.center
+                    ? pw.TextAlign.center
+                    : alignment == pw.Alignment.centerRight
+                    ? pw.TextAlign.right
+                    : pw.TextAlign.left,
+              ),
+            );
+          }
+
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              pw.Center(child: pw.Text('Actual', style: headingStyle)),
+              pw.SizedBox(height: 10),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
+                  pw.SizedBox(width: 8),
+                  pw.Expanded(child: infoCell('Status', statusLabel)),
+                  pw.SizedBox(width: 8),
+                  pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
+                ],
+              ),
+              pw.SizedBox(height: 6),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(
+                    child: infoCell('Whatsapp Number', customerMobile),
+                  ),
+                  pw.SizedBox(width: 8),
+                  pw.Expanded(
+                    child: infoCell('Alternate Mobile', alternateMobile),
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 6),
+              pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Expanded(child: infoCell('Purity', purity)),
+                  pw.SizedBox(width: 8),
+                  pw.Expanded(child: infoCell('Making', making)),
+                  pw.SizedBox(width: 8),
+                  pw.Expanded(child: infoCell('GST', gst)),
+                ],
+              ),
+              pw.SizedBox(height: 8),
+              pw.Table(
+                border: pw.TableBorder.all(color: PdfColors.grey400),
+                columnWidths: {
+                  0: const pw.FixedColumnWidth(20),
+                  1: const pw.FixedColumnWidth(34),
+                  2: pw.FixedColumnWidth(itemNameColumnWidth),
+                  3: const pw.FixedColumnWidth(20),
+                  4: const pw.FixedColumnWidth(38),
+                  5: const pw.FixedColumnWidth(34),
+                  6: const pw.FixedColumnWidth(38),
+                  7: const pw.FlexColumnWidth(1.2),
+                },
+                defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey200,
+                    ),
+                    children: [
+                      tableCell(
+                        'S No.',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Purity',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Item Name',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Qty',
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.center,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Gross',
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Less',
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Nett',
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                      tableCell(
+                        'Notes',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey200,
+                      ),
+                    ],
+                  ),
+                  ...actualItems.asMap().entries.map(
+                    (entry) => pw.TableRow(
+                      children: [
+                        tableCell('${entry.key + 1}', style: tableStyle),
+                        tableCell(
+                          entry.value.purityController.text.trim(),
+                          style: tableStyle,
+                        ),
+                        tableCell(
+                          entry.value.nameController.text.trim(),
+                          style: tableStyle,
+                        ),
+                        tableCell(
+                          entry.value.quantityController.text.trim(),
+                          style: tableStyle,
+                          alignment: pw.Alignment.center,
+                        ),
+                        tableCell(
+                          _formatWeightFixed3(entry.value.grossWeight),
+                          style: tableStyle,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          _formatWeight3(entry.value.lessWeight),
+                          style: tableStyle,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          _formatWeightFixed3(entry.value.actualNetWeight),
+                          style: tableStyle,
+                          alignment: pw.Alignment.centerRight,
+                        ),
+                        tableCell(
+                          entry.value.notesController.text.trim(),
+                          style: tableStyle,
+                        ),
+                      ],
+                    ),
+                  ),
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey100,
+                    ),
+                    children: [
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        'Total',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        totalQuantity,
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.center,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        totalGrossWeight,
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        totalLessWeight,
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        totalNetWeight,
+                        style: tableHeaderStyle,
+                        alignment: pw.Alignment.centerRight,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              pw.SizedBox(height: 8),
+              pw.Row(
+                children: [
+                  pw.Spacer(),
+                  pw.Expanded(
+                    flex: 2,
+                    child: infoCell('Actual Nett Weight', '$totalNetWeight gm'),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    return document.save();
+  }
+}
