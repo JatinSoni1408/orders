@@ -251,6 +251,7 @@ class NewOrderItem {
   const NewOrderItem({
     required this.name,
     required this.category,
+    required this.bhav,
     required this.makingType,
     required this.makingCharge,
     required this.grossWeight,
@@ -262,6 +263,7 @@ class NewOrderItem {
 
   final String name;
   final String category;
+  final double bhav;
   final String makingType;
   final double makingCharge;
   final double grossWeight;
@@ -279,6 +281,7 @@ class NewOrderItem {
     return {
       'name': name,
       'category': category,
+      'bhav': bhav,
       'makingType': makingType,
       'makingCharge': makingCharge,
       'grossWeight': grossWeight,
@@ -293,6 +296,7 @@ class NewOrderItem {
     return NewOrderItem(
       name: json['name'] as String? ?? '',
       category: json['category'] as String? ?? 'Gold22kt',
+      bhav: (json['bhav'] as num?)?.toDouble() ?? 0,
       makingType: json['makingType'] as String? ?? 'Percentage',
       makingCharge: (json['makingCharge'] as num?)?.toDouble() ?? 0,
       grossWeight: (json['grossWeight'] as num?)?.toDouble() ?? 0,
@@ -494,7 +498,7 @@ extension AdvanceModeX on AdvanceMode {
     }
   }
 }
-
+ 
 extension OrderSortOptionX on OrderSortOption {
   String get label {
     switch (this) {

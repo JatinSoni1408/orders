@@ -208,8 +208,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     }
   }
 
+  double _newItemBhav(_NewItemDraft item) {
+    return item.bhav > 0 ? item.bhav : _newItemRateFor(item.category);
+  }
+
   double _newItemBaseAmount(_NewItemDraft item) {
-    final rate = _newItemRateFor(item.category);
+    final rate = _newItemBhav(item);
     switch (item.makingType) {
       case 'FixRate':
         return item.makingCharge;
@@ -1194,15 +1198,16 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 0: pw.FixedColumnWidth(18),
                 1: pw.FlexColumnWidth(1.55),
                 2: pw.FixedColumnWidth(32),
-                3: pw.FlexColumnWidth(1.05),
-                4: pw.FixedColumnWidth(44),
-                5: pw.FixedColumnWidth(40),
-                6: pw.FixedColumnWidth(34),
+                3: pw.FixedColumnWidth(40),
+                4: pw.FlexColumnWidth(1.05),
+                5: pw.FixedColumnWidth(44),
+                6: pw.FixedColumnWidth(40),
                 7: pw.FixedColumnWidth(34),
                 8: pw.FixedColumnWidth(34),
-                9: pw.FixedColumnWidth(38),
-                10: pw.FixedColumnWidth(24),
-                11: pw.FixedColumnWidth(44),
+                9: pw.FixedColumnWidth(34),
+                10: pw.FixedColumnWidth(38),
+                11: pw.FixedColumnWidth(24),
+                12: pw.FixedColumnWidth(44),
               },
               children: [
                 pw.TableRow(
@@ -1223,6 +1228,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       'Cat',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
+                    ),
+                    tableCell(
+                      'Bhav',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
                       'Notes',
@@ -1296,6 +1307,11 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         style: tableStyle,
                       ),
                       tableCell(
+                        _formatCurrency(_newItemBhav(entry.value)),
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
                         entry.value.notesController.text.trim(),
                         style: tableStyle,
                         maxLines: 2,
@@ -1348,7 +1364,17 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
+                      '',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
                       'Total',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
+                      '',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
                     ),
@@ -2955,8 +2981,12 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
     }
   }
 
+  double _bhavFor(_NewItemDraft item) {
+    return item.bhav > 0 ? item.bhav : _rateFor(item.category);
+  }
+
   double _baseAmount(_NewItemDraft item) {
-    final rate = _rateFor(item.category);
+    final rate = _bhavFor(item);
     switch (item.makingType) {
       case 'FixRate':
         return item.makingCharge;
@@ -3283,15 +3313,16 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                 0: pw.FixedColumnWidth(24),
                 1: pw.FlexColumnWidth(1.8),
                 2: pw.FixedColumnWidth(40),
-                3: pw.FlexColumnWidth(1.6),
-                4: pw.FixedColumnWidth(54),
-                5: pw.FixedColumnWidth(48),
-                6: pw.FixedColumnWidth(44),
-                7: pw.FixedColumnWidth(40),
-                8: pw.FixedColumnWidth(44),
+                3: pw.FixedColumnWidth(48),
+                4: pw.FlexColumnWidth(1.6),
+                5: pw.FixedColumnWidth(54),
+                6: pw.FixedColumnWidth(48),
+                7: pw.FixedColumnWidth(44),
+                8: pw.FixedColumnWidth(40),
                 9: pw.FixedColumnWidth(44),
-                10: pw.FixedColumnWidth(34),
-                11: pw.FixedColumnWidth(52),
+                10: pw.FixedColumnWidth(44),
+                11: pw.FixedColumnWidth(34),
+                12: pw.FixedColumnWidth(52),
               },
               defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
               children: [
@@ -3315,6 +3346,12 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       maxLines: 2,
+                    ),
+                    tableCell(
+                      'Bhav',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
                       'Notes',
@@ -3388,6 +3425,11 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                         _categoryLabel(entry.value.category),
                         style: tableStyle,
                       ),
+                      tableCell(
+                        _formatCurrency(_bhavFor(entry.value)),
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
+                      ),
                       tableCell(_notesFor(entry.value), style: tableStyle),
                       tableCell(entry.value.makingType, style: tableStyle),
                       tableCell(
@@ -3438,6 +3480,11 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                     ),
                     tableCell(
                       'Total',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
+                      '',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
                     ),

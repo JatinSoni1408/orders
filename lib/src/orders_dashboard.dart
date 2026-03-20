@@ -270,45 +270,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         .fold<double>(0, (sum, item) => sum + item.actualNetWeight);
   }
 
-  List<MapEntry<String, double>> get _estimateCategoryWeightEntries {
-    const preferredOrder = ['22K', '18K', 'Silver'];
-    final totals = <String, double>{};
-
-    for (final item in _estimateItems.where((item) => !item.isEmpty)) {
-      final category = item.purityController.text.trim().isEmpty
-          ? 'Other'
-          : item.purityController.text.trim();
-      totals.update(
-        category,
-        (value) => value + item.estimatedWeight,
-        ifAbsent: () => item.estimatedWeight,
-      );
-    }
-
-    final entries = totals.entries.toList();
-    entries.sort((a, b) {
-      final aIndex = preferredOrder.indexOf(a.key);
-      final bIndex = preferredOrder.indexOf(b.key);
-      final normalizedAIndex = aIndex == -1 ? preferredOrder.length : aIndex;
-      final normalizedBIndex = bIndex == -1 ? preferredOrder.length : bIndex;
-      final orderCompare = normalizedAIndex.compareTo(normalizedBIndex);
-      if (orderCompare != 0) {
-        return orderCompare;
-      }
-      return a.key.compareTo(b.key);
-    });
-    return entries;
-  }
-
-  double _estimateCategoryWeightFor(String category) {
-    return _estimateCategoryWeightEntries
-        .firstWhere(
-          (entry) => entry.key == category,
-          orElse: () => const MapEntry('', 0),
-        )
-        .value;
-  }
-
   String get _estimateAutoWeightRangeLabel {
     final startWeight = _estimateTotalEstimatedWeight;
     final endWeight = startWeight + 4;
@@ -437,8 +398,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
   }
 
+  double _newItemBhav(_NewItemDraft item) {
+    return item.bhav > 0 ? item.bhav : _newItemRateForCategory(item.category);
+  }
+
   double _newItemBaseAmount(_NewItemDraft item) {
-    final rate = _newItemRateForCategory(item.category);
+    final rate = _newItemBhav(item);
     switch (item.makingType) {
       case 'FixRate':
         return item.makingCharge;
@@ -609,6 +574,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final controller in [
       item.nameController,
       item.categoryController,
+      item.bhavController,
       item.makingTypeController,
       item.makingChargeController,
       item.grossWeightController,
@@ -1047,6 +1013,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     (item) => _NewItemDraft(
                       name: item.name,
                       category: item.category,
+                      bhavText: item.bhav > 0 ? item.bhav.toString() : '',
                       makingType: item.makingType,
                       makingChargeText: item.makingCharge.toString(),
                       grossWeightText: item.grossWeight.toString(),
@@ -1146,6 +1113,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             (item) => NewOrderItem(
               name: item.nameController.text.trim(),
               category: item.category,
+              bhav: item.bhav,
               makingType: item.makingType,
               makingCharge: item.makingCharge,
               grossWeight: item.grossWeight,
@@ -1392,43 +1360,45 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
+  _CombinedBillPrintPreviewSheet _buildCombinedBillPrintPreviewSheet() {
+    return _CombinedBillPrintPreviewSheet(
+      customerName: _estimateCustomerName,
+      customerMobile: _estimateCustomerMobile,
+      alternateMobile: _estimateAlternateMobile,
+      statusLabel: _estimateStatus.label,
+      occasion: _estimateOccasion,
+      occasionDate: _estimateOccasionDateLabel,
+      deliveryDate: _estimateDeliveryDateLabel,
+      purity: _estimatePurity,
+      making: _estimateMaking.toStringAsFixed(2),
+      gstRate: _estimateGst,
+      estimateTotalQuantity: _estimateTotalQuantity.toString(),
+      estimateWeightRange: _estimateWeightRangeLabel,
+      actualTotalGrossWeight: _formatWeightFixed3(_actualTotalGrossWeight),
+      actualTotalLessWeight: _formatWeightFixed3(_actualTotalLessWeight),
+      actualTotalNetWeight: _formatWeightFixed3(_actualTotalNetWeight),
+      advanceTotalAmount: _advanceTotalAmount,
+      advanceOldItemsTotalAmount: _advanceOldItemsTotalAmount,
+      advanceNetWeight: _advanceTotalNetWeight,
+      newItemsSubtotal: _newItemsSubtotal,
+      newItemsTotalGst: _newItemsTotalGst,
+      newItemsGrandTotal: _newItemsGrandTotal,
+      balanceAfterAdvance: _billPreviewBalanceAfterAdvance,
+      gold22Rate: _newItemRateForCategory('Gold22kt'),
+      gold18Rate: _newItemRateForCategory('Gold18kt'),
+      silverRate: _newItemRateForCategory('Silver'),
+      estimateItems: _sortedEstimateItems,
+      advanceItems: _populatedAdvanceItems,
+      oldItems: _populatedAdvanceOldItems,
+      newItems: _populatedNewItems,
+    );
+  }
+
   void _openCombinedBillPrintPreview() {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) {
-          return _CombinedBillPrintPreviewSheet(
-            customerName: _estimateCustomerName,
-            customerMobile: _estimateCustomerMobile,
-            alternateMobile: _estimateAlternateMobile,
-            statusLabel: _estimateStatus.label,
-            occasion: _estimateOccasion,
-            occasionDate: _estimateOccasionDateLabel,
-            deliveryDate: _estimateDeliveryDateLabel,
-            purity: _estimatePurity,
-            making: _estimateMaking.toStringAsFixed(2),
-            gstRate: _estimateGst,
-            estimateTotalQuantity: _estimateTotalQuantity.toString(),
-            estimateWeightRange: _estimateWeightRangeLabel,
-            actualTotalGrossWeight: _formatWeightFixed3(
-              _actualTotalGrossWeight,
-            ),
-            actualTotalLessWeight: _formatWeightFixed3(_actualTotalLessWeight),
-            actualTotalNetWeight: _formatWeightFixed3(_actualTotalNetWeight),
-            advanceTotalAmount: _advanceTotalAmount,
-            advanceOldItemsTotalAmount: _advanceOldItemsTotalAmount,
-            advanceNetWeight: _advanceTotalNetWeight,
-            newItemsSubtotal: _newItemsSubtotal,
-            newItemsTotalGst: _newItemsTotalGst,
-            newItemsGrandTotal: _newItemsGrandTotal,
-            balanceAfterAdvance: _billPreviewBalanceAfterAdvance,
-            gold22Rate: _newItemRateForCategory('Gold22kt'),
-            gold18Rate: _newItemRateForCategory('Gold18kt'),
-            silverRate: _newItemRateForCategory('Silver'),
-            estimateItems: _sortedEstimateItems,
-            advanceItems: _populatedAdvanceItems,
-            oldItems: _populatedAdvanceOldItems,
-            newItems: _populatedNewItems,
-          );
+          return _buildCombinedBillPrintPreviewSheet();
         },
       ),
     );
@@ -1928,261 +1898,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Summary',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withAlpha(12),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withAlpha(28),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _EstimateSummaryMetaTile(
-                            label: 'Name',
-                            value: _estimateCustomerName,
-                            icon: Icons.person_outline,
-                            maxLines: 2,
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Whatsapp Number',
-                                  value: _estimateCustomerMobile,
-                                  icon: Icons.call_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Alternate Mobile',
-                                  value: _estimateAlternateMobile,
-                                  icon: Icons.phone_forwarded_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Occasion',
-                                  value: _estimateOccasion,
-                                  icon: Icons.celebration_outlined,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Occasion Date',
-                                  value: _estimateOccasionDateLabel,
-                                  icon: Icons.event_outlined,
-                                  singleLineValue: true,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Divider(color: Colors.grey.shade300, height: 1),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'Purity',
-                            value: _estimatePurity,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'Making',
-                            value: _estimateMaking.toStringAsFixed(2),
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'GST',
-                            value: '${_estimateGst.toStringAsFixed(2)}%',
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 24),
-                    if (_sortedEstimateItems.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Table(
-                          defaultColumnWidth: const IntrinsicColumnWidth(),
-                          border: TableBorder.all(color: Colors.grey),
-                          children: [
-                            TableRow(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
-                              ),
-                              children: const [
-                                _EstimateTableCell('S No.', isHeader: true),
-                                _EstimateTableCell('Purity', isHeader: true),
-                                _EstimateTableCell('Item Name', isHeader: true),
-                                _EstimateTableCell('Qty', isHeader: true),
-                                _EstimateTableCell(
-                                  'Est. Weight',
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell('Notes', isHeader: true),
-                              ],
-                            ),
-                            ..._sortedEstimateItems.asMap().entries.map(
-                              (entry) => TableRow(
-                                children: [
-                                  _EstimateTableCell('${entry.key + 1}'),
-                                  _EstimateTableCell(
-                                    entry.value.purityController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.nameController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.quantityController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    _formatWeight3(entry.value.estimatedWeight),
-                                    textAlign: TextAlign.right,
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.notesController.text.trim(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            TableRow(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade100,
-                              ),
-                              children: [
-                                const _EstimateTableCell(''),
-                                const _EstimateTableCell(''),
-                                const _EstimateTableCell(
-                                  'Total',
-                                  isHeader: true,
-                                ),
-                                _EstimateTableCell(
-                                  _estimateTotalQuantity.toString(),
-                                  isHeader: true,
-                                ),
-                                _EstimateTableCell(
-                                  _formatWeight3(_estimateTotalEstimatedWeight),
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                const _EstimateTableCell(''),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _EstimateSummaryRow(
-                        label: 'Estimated Weight',
-                        value: _estimateWeightRangeLabel,
-                        emphasize: true,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    if (_estimateCategoryWeightEntries.isNotEmpty) ...[
-                      Text(
-                        'Estimated Weight By Category',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          for (final category in const [
-                            '22K',
-                            '18K',
-                            'Silver',
-                          ]) ...[
-                            Expanded(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withAlpha(10),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary.withAlpha(28),
-                                  ),
-                                ),
-                                child: Text(
-                                  '$category: ${_formatWeight3(_estimateCategoryWeightFor(category))} gm',
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                            ),
-                            if (category != 'Silver') const SizedBox(width: 8),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    Divider(color: Colors.grey.shade300, height: 1),
-                    const SizedBox(height: 12),
-                    _EstimateSummaryRow(
-                      label: 'Delivery Date',
-                      value: _estimateDeliveryDateLabel,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -2485,55 +2200,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       ),
                     ),
                     const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withAlpha(12),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withAlpha(28),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _EstimateSummaryMetaTile(
-                            label: 'Name',
-                            value: _estimateCustomerName,
-                            icon: Icons.person_outline,
-                            maxLines: 2,
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Whatsapp Number',
-                                  value: _estimateCustomerMobile,
-                                  icon: Icons.call_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Alternate Mobile',
-                                  value: _estimateAlternateMobile,
-                                  icon: Icons.phone_forwarded_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
                     Divider(color: Colors.grey.shade300, height: 1),
                     const SizedBox(height: 12),
                     Row(
@@ -2831,51 +2497,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Summary',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _EstimateSummaryRow(
-                      label: 'Items',
-                      value: _populatedAdvanceItems.length.toString(),
-                    ),
-                    const SizedBox(height: 10),
-                    _EstimateSummaryRow(
-                      label: 'Old Items',
-                      value: _populatedAdvanceOldItems.length.toString(),
-                    ),
-                    const SizedBox(height: 10),
-                    _EstimateSummaryRow(
-                      label: 'Total Net Weight',
-                      value: '${_formatWeight3(_advanceTotalNetWeight)} gm',
-                    ),
-                    const SizedBox(height: 10),
-                    _EstimateSummaryRow(
-                      label: 'Old Item Amount',
-                      value: _formatCurrency(_advanceOldItemsTotalAmount),
-                    ),
-                    const SizedBox(height: 10),
-                    _EstimateSummaryRow(
-                      label: 'Total Amount',
-                      value: _formatCurrency(
-                        _advanceTotalAmount + _advanceOldItemsTotalAmount,
-                      ),
-                      emphasize: true,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: _resetAdvanceForm,
               style: FilledButton.styleFrom(
@@ -2918,7 +2539,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Add manually priced items here. Totals update instantly and stay saved with your working draft.',
+                      'Add manually priced items here. Shared rates stay available, and each item can also carry its own manual Bhav.',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 16),
@@ -3000,7 +2621,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             ),
             const SizedBox(height: 4),
             Text(
-              'Enter gross and less weight for each piece. Nett weight and line amount are calculated automatically.',
+              'Enter gross and less weight for each piece. Nett weight and line amount are calculated automatically, and item Bhav overrides the shared rate when entered.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 8),
@@ -3011,6 +2632,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 child: _NewItemEditor(
                   index: index + 1,
                   item: item,
+                  effectiveBhav: _newItemBhav(item),
                   amount: _newItemTotalAmount(item),
                   baseAmount: _newItemBaseAmount(item),
                   gstAmount: _newItemGstAmount(item),
@@ -3167,588 +2789,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return _newItemsGrandTotal - _advanceCombinedAmount;
   }
 
-  Widget _buildBillPreviewSection({
-    required String title,
-    required String subtitle,
-    required Widget child,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              subtitle,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 12),
-            child,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBillPreviewEmptyState(String message) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
-    );
-  }
-
-  Widget _buildBillEstimateTable() {
-    if (_sortedEstimateItems.isEmpty) {
-      return _buildBillPreviewEmptyState(
-        'Estimate items will appear here once you add them in the Estimate tab.',
-      );
-    }
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Table(
-        defaultColumnWidth: const IntrinsicColumnWidth(),
-        border: TableBorder.all(color: Colors.grey),
-        children: [
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade200),
-            children: const [
-              _EstimateTableCell('S No.', isHeader: true),
-              _EstimateTableCell('Purity', isHeader: true),
-              _EstimateTableCell('Item Name', isHeader: true),
-              _EstimateTableCell('Qty', isHeader: true),
-              _EstimateTableCell(
-                'Est. Weight',
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell('Notes', isHeader: true),
-            ],
-          ),
-          ..._sortedEstimateItems.asMap().entries.map(
-            (entry) => TableRow(
-              children: [
-                _EstimateTableCell('${entry.key + 1}'),
-                _EstimateTableCell(entry.value.purityController.text.trim()),
-                _EstimateTableCell(entry.value.nameController.text.trim()),
-                _EstimateTableCell(entry.value.quantityController.text.trim()),
-                _EstimateTableCell(
-                  _formatWeight3(entry.value.estimatedWeight),
-                  textAlign: TextAlign.right,
-                ),
-                _EstimateTableCell(entry.value.notesController.text.trim()),
-              ],
-            ),
-          ),
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade100),
-            children: [
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell('Total', isHeader: true),
-              _EstimateTableCell(
-                _estimateTotalQuantity.toString(),
-                isHeader: true,
-              ),
-              _EstimateTableCell(
-                _formatWeight3(_estimateTotalEstimatedWeight),
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              const _EstimateTableCell(''),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBillActualTable() {
-    if (_sortedEstimateItems.isEmpty) {
-      return _buildBillPreviewEmptyState(
-        'Actual item weights will appear here once you fill them in the Actual tab.',
-      );
-    }
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Table(
-        defaultColumnWidth: const IntrinsicColumnWidth(),
-        border: TableBorder.all(color: Colors.grey),
-        children: [
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade200),
-            children: const [
-              _EstimateTableCell('Serial No.', isHeader: true),
-              _EstimateTableCell('Purity', isHeader: true),
-              _EstimateTableCell('Item Name', isHeader: true),
-              _EstimateTableCell('Quantity', isHeader: true),
-              _EstimateTableCell(
-                'Gross Weight',
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell(
-                'Less Weight',
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell(
-                'Nett Weight',
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell('Notes', isHeader: true),
-            ],
-          ),
-          ..._sortedEstimateItems.asMap().entries.map(
-            (entry) => TableRow(
-              children: [
-                _EstimateTableCell('${entry.key + 1}'),
-                _EstimateTableCell(entry.value.purityController.text.trim()),
-                _EstimateTableCell(entry.value.nameController.text.trim()),
-                _EstimateTableCell(entry.value.quantityController.text.trim()),
-                _EstimateTableCell(
-                  _formatWeightFixed3(entry.value.grossWeight),
-                  textAlign: TextAlign.right,
-                ),
-                _EstimateTableCell(
-                  _formatWeight3(entry.value.lessWeight),
-                  textAlign: TextAlign.right,
-                ),
-                _EstimateTableCell(
-                  _formatWeightFixed3(entry.value.actualNetWeight),
-                  textAlign: TextAlign.right,
-                ),
-                _EstimateTableCell(entry.value.notesController.text.trim()),
-              ],
-            ),
-          ),
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade100),
-            children: [
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell('Total', isHeader: true),
-              _EstimateTableCell(
-                _estimateTotalQuantity.toString(),
-                isHeader: true,
-              ),
-              _EstimateTableCell(
-                _formatWeightFixed3(_actualTotalGrossWeight),
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell(
-                _formatWeight3(_actualTotalLessWeight),
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              _EstimateTableCell(
-                _formatWeightFixed3(_actualTotalNetWeight),
-                isHeader: true,
-                textAlign: TextAlign.right,
-              ),
-              const _EstimateTableCell(''),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBillAdvanceTables() {
-    if (_populatedAdvanceItems.isEmpty && _populatedAdvanceOldItems.isEmpty) {
-      return _buildBillPreviewEmptyState(
-        'Advance payments and old item returns will appear here once entered.',
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_populatedAdvanceItems.isNotEmpty) ...[
-          Text(
-            'Advance Entries',
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              defaultColumnWidth: const IntrinsicColumnWidth(),
-              border: TableBorder.all(color: Colors.grey),
-              children: [
-                TableRow(
-                  decoration: BoxDecoration(color: Colors.grey.shade200),
-                  children: const [
-                    _EstimateTableCell('Date', isHeader: true),
-                    _EstimateTableCell('Mode', isHeader: true),
-                    _EstimateTableCell('Cheque No', isHeader: true),
-                    _EstimateTableCell('Amount', isHeader: true),
-                    _EstimateTableCell('Rate22kt', isHeader: true),
-                    _EstimateTableCell('Making %', isHeader: true),
-                    _EstimateTableCell('Net Weight', isHeader: true),
-                  ],
-                ),
-                ..._populatedAdvanceItems.map(
-                  (item) => TableRow(
-                    children: [
-                      _EstimateTableCell(_formatEntryDate(item.date)),
-                      _EstimateTableCell(item.mode.label),
-                      _EstimateTableCell(item.chequeNumber ?? '-'),
-                      _EstimateTableCell(_formatCurrency(item.amount)),
-                      _EstimateTableCell(_formatCurrency(item.rate)),
-                      _EstimateTableCell(
-                        '${item.rateMaking.toStringAsFixed(2)}%',
-                      ),
-                      _EstimateTableCell('${_formatWeight3(item.weight)} gm'),
-                    ],
-                  ),
-                ),
-                TableRow(
-                  decoration: BoxDecoration(color: Colors.grey.shade100),
-                  children: [
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell('Total', isHeader: true),
-                    const _EstimateTableCell(''),
-                    _EstimateTableCell(
-                      _formatCurrency(_advanceTotalAmount),
-                      isHeader: true,
-                    ),
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell(''),
-                    _EstimateTableCell(
-                      '${_formatWeight3(_advanceTotalNetWeight)} gm',
-                      isHeader: true,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-        if (_populatedAdvanceItems.isNotEmpty &&
-            _populatedAdvanceOldItems.isNotEmpty)
-          const SizedBox(height: 16),
-        if (_populatedAdvanceOldItems.isNotEmpty) ...[
-          Text(
-            'Old Item Returns',
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              defaultColumnWidth: const IntrinsicColumnWidth(),
-              border: TableBorder.all(color: Colors.grey),
-              children: [
-                TableRow(
-                  decoration: BoxDecoration(color: Colors.grey.shade200),
-                  children: const [
-                    _EstimateTableCell('Date', isHeader: true),
-                    _EstimateTableCell('Item', isHeader: true),
-                    _EstimateTableCell('Return Rate', isHeader: true),
-                    _EstimateTableCell('Gross', isHeader: true),
-                    _EstimateTableCell('Less', isHeader: true),
-                    _EstimateTableCell('Nett', isHeader: true),
-                    _EstimateTableCell('Tanch', isHeader: true),
-                    _EstimateTableCell('Amount', isHeader: true),
-                  ],
-                ),
-                ..._populatedAdvanceOldItems.map(
-                  (item) => TableRow(
-                    children: [
-                      _EstimateTableCell(_formatEntryDate(item.date)),
-                      _EstimateTableCell(item.itemNameController.text.trim()),
-                      _EstimateTableCell(_formatCurrency(item.returnRate)),
-                      _EstimateTableCell(
-                        '${_formatWeight3(item.grossWeight)} gm',
-                      ),
-                      _EstimateTableCell(
-                        '${_formatWeight3(item.lessWeight)} gm',
-                      ),
-                      _EstimateTableCell(
-                        '${_formatWeight3(item.nettWeight)} gm',
-                      ),
-                      _EstimateTableCell('${_formatWeight3(item.tanch)}%'),
-                      _EstimateTableCell(_formatCurrency(item.amount)),
-                    ],
-                  ),
-                ),
-                TableRow(
-                  decoration: BoxDecoration(color: Colors.grey.shade100),
-                  children: [
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell('Total', isHeader: true),
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell(''),
-                    const _EstimateTableCell(''),
-                    _EstimateTableCell(
-                      _formatCurrency(_advanceOldItemsTotalAmount),
-                      isHeader: true,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildBillNewItemsTable() {
-    if (_populatedNewItems.isEmpty) {
-      return _buildBillPreviewEmptyState(
-        'New item pricing lines will appear here once added in the New Items tab.',
-      );
-    }
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Table(
-        defaultColumnWidth: const IntrinsicColumnWidth(),
-        border: TableBorder.all(color: Colors.grey),
-        children: [
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade200),
-            children: const [
-              _EstimateTableCell('No.', isHeader: true),
-              _EstimateTableCell('Item Name', isHeader: true),
-              _EstimateTableCell('Category', isHeader: true),
-              _EstimateTableCell('Making Type', isHeader: true),
-              _EstimateTableCell('Making', isHeader: true),
-              _EstimateTableCell('Gross', isHeader: true),
-              _EstimateTableCell('Less', isHeader: true),
-              _EstimateTableCell('Nett', isHeader: true),
-              _EstimateTableCell('Additional', isHeader: true),
-              _EstimateTableCell('GST', isHeader: true),
-              _EstimateTableCell('Total', isHeader: true),
-              _EstimateTableCell('Notes', isHeader: true),
-            ],
-          ),
-          ..._populatedNewItems.asMap().entries.map(
-            (entry) => TableRow(
-              children: [
-                _EstimateTableCell('${entry.key + 1}'),
-                _EstimateTableCell(entry.value.nameController.text.trim()),
-                _EstimateTableCell(_newItemCategoryLabel(entry.value.category)),
-                _EstimateTableCell(entry.value.makingType),
-                _EstimateTableCell(_formatCurrency(entry.value.makingCharge)),
-                _EstimateTableCell(
-                  '${_formatWeightFixed3(entry.value.grossWeight)} gm',
-                ),
-                _EstimateTableCell(
-                  '${_formatWeightFixed3(entry.value.lessWeight)} gm',
-                ),
-                _EstimateTableCell(
-                  '${_formatWeightFixed3(entry.value.netWeight)} gm',
-                ),
-                _EstimateTableCell(
-                  _formatCurrency(entry.value.additionalCharge),
-                ),
-                _EstimateTableCell(entry.value.gstEnabled ? 'Yes' : 'No'),
-                _EstimateTableCell(
-                  _formatCurrency(_newItemTotalAmount(entry.value)),
-                ),
-                _EstimateTableCell(entry.value.notesController.text.trim()),
-              ],
-            ),
-          ),
-          TableRow(
-            decoration: BoxDecoration(color: Colors.grey.shade100),
-            children: [
-              const _EstimateTableCell(''),
-              const _EstimateTableCell('Total', isHeader: true),
-              _EstimateTableCell(
-                _populatedNewItems.length.toString(),
-                isHeader: true,
-              ),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              const _EstimateTableCell(''),
-              _EstimateTableCell(
-                _formatCurrency(_newItemsGrandTotal),
-                isHeader: true,
-              ),
-              const _EstimateTableCell(''),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBillPreviewBody(double contentTopPadding) {
-    final balanceLabel = _billPreviewBalanceAfterAdvance < 0
-        ? 'Excess Advance'
-        : 'Balance After Advance';
+    final combinedPreview = _buildCombinedBillPrintPreviewSheet();
 
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Generated Bill',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'This preview combines the current draft from Estimate, Actual, Advance, and New Items into one bill view.',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withAlpha(10),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withAlpha(24),
-                        ),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Name',
-                                  value: _estimateCustomerName,
-                                  icon: Icons.person_outline,
-                                  maxLines: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Status',
-                                  value: _estimateStatus.label,
-                                  icon: Icons.info_outline,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Delivery Date',
-                                  value: _estimateDeliveryDateLabel,
-                                  icon: Icons.event_outlined,
-                                  singleLineValue: true,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Whatsapp Number',
-                                  value: _estimateCustomerMobile,
-                                  icon: Icons.call_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Alternate Mobile',
-                                  value: _estimateAlternateMobile,
-                                  icon: Icons.phone_forwarded_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryMetaTile(
-                                  label: 'Occasion',
-                                  value: _estimateOccasion,
-                                  icon: Icons.celebration_outlined,
-                                  maxLines: 2,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _EstimateSummaryInlineItem(
-                                  label: 'Purity',
-                                  value: _estimatePurity,
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryInlineItem(
-                                  label: 'Making',
-                                  value: _estimateMaking.toStringAsFixed(2),
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _EstimateSummaryInlineItem(
-                                  label: 'GST',
-                                  value: '${_estimateGst.toStringAsFixed(2)}%',
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -3756,68 +2805,49 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Bill Summary',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      'Bill PDF Preview',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _EstimateSummaryRow(
-                      label: 'Estimated Weight Range',
-                      value: _estimateWeightRangeLabel,
-                    ),
                     const SizedBox(height: 8),
-                    _EstimateSummaryRow(
-                      label: 'Actual Nett Weight',
-                      value: '${_formatWeightFixed3(_actualTotalNetWeight)} gm',
-                    ),
-                    const SizedBox(height: 8),
-                    _EstimateSummaryRow(
-                      label: 'Advance Credit',
-                      value: _formatCurrency(_advanceCombinedAmount),
-                    ),
-                    const SizedBox(height: 8),
-                    _EstimateSummaryRow(
-                      label: 'New Items Total',
-                      value: _formatCurrency(_newItemsGrandTotal),
-                    ),
-                    const SizedBox(height: 8),
-                    _EstimateSummaryRow(
-                      label: balanceLabel,
-                      value: _formatCurrency(
-                        _billPreviewBalanceAfterAdvance.abs(),
+                    Text(
+                      'The Bill Preview tab now renders the same live PDF preview used in the print screen for the current draft.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.grey.shade700,
                       ),
-                      emphasize: true,
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: () {
+                          Printing.layoutPdf(
+                            onLayout: combinedPreview._buildCombinedBillPdf,
+                          );
+                        },
+                        icon: const Icon(Icons.print_outlined),
+                        label: const Text('Print'),
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
             const SizedBox(height: 16),
-            _buildBillPreviewSection(
-              title: 'Estimate',
-              subtitle: 'Estimate preview data',
-              child: _buildBillEstimateTable(),
+            Expanded(
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: PdfPreview(
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowSharing: false,
+                  pdfFileName: 'combined-bill-preview.pdf',
+                  build: combinedPreview._buildCombinedBillPdf,
+                ),
+              ),
             ),
-            const SizedBox(height: 16),
-            _buildBillPreviewSection(
-              title: 'Actual',
-              subtitle: 'Actual weight confirmation',
-              child: _buildBillActualTable(),
-            ),
-            const SizedBox(height: 16),
-            _buildBillPreviewSection(
-              title: 'Advance',
-              subtitle: 'Advance payments and old item returns',
-              child: _buildBillAdvanceTables(),
-            ),
-            const SizedBox(height: 16),
-            _buildBillPreviewSection(
-              title: 'New Items',
-              subtitle: 'Priced items added for billing',
-              child: _buildBillNewItemsTable(),
-            ),
-            const SizedBox(height: 12),
           ],
         ),
       ),
@@ -3956,8 +2986,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 _selectedSection == AppSection.estimateCalculator ||
                 _selectedSection == AppSection.advance ||
                 _selectedSection == AppSection.actual ||
-                _selectedSection == AppSection.items ||
-                _selectedSection == AppSection.billPreview)
+                _selectedSection == AppSection.items)
               IconButton(
                 onPressed: switch (_selectedSection) {
                   AppSection.orders => _openPrintPreview,
@@ -4538,6 +3567,7 @@ class _NewItemDraft {
   _NewItemDraft({
     String? name,
     String? category,
+    String? bhavText,
     String? makingType,
     String? makingChargeText,
     String? grossWeightText,
@@ -4547,6 +3577,7 @@ class _NewItemDraft {
     String? notes,
   }) : nameController = TextEditingController(text: name ?? ''),
        categoryController = TextEditingController(text: category ?? 'Gold22kt'),
+       bhavController = TextEditingController(text: bhavText ?? ''),
        makingTypeController = TextEditingController(
          text:
              makingType ??
@@ -4568,6 +3599,7 @@ class _NewItemDraft {
     return _NewItemDraft(
       name: json['name'] as String? ?? '',
       category: json['category'] as String? ?? 'Gold22kt',
+      bhavText: json['bhavText'] as String? ?? '',
       makingType: json['makingType'] as String?,
       makingChargeText: json['makingChargeText'] as String? ?? '',
       grossWeightText: json['grossWeightText'] as String? ?? '',
@@ -4580,6 +3612,7 @@ class _NewItemDraft {
 
   final TextEditingController nameController;
   final TextEditingController categoryController;
+  final TextEditingController bhavController;
   final TextEditingController makingTypeController;
   final TextEditingController makingChargeController;
   final TextEditingController grossWeightController;
@@ -4601,6 +3634,10 @@ class _NewItemDraft {
       return value;
     }
     return category == 'Silver' ? 'PerGram' : 'FixRate';
+  }
+
+  double get bhav {
+    return double.tryParse(bhavController.text.trim()) ?? 0;
   }
 
   double get makingCharge {
@@ -4626,6 +3663,7 @@ class _NewItemDraft {
 
   bool get isEmpty =>
       nameController.text.trim().isEmpty &&
+      bhav == 0 &&
       makingCharge == 0 &&
       grossWeight == 0 &&
       lessWeight == 0 &&
@@ -4656,6 +3694,7 @@ class _NewItemDraft {
     return {
       'name': nameController.text,
       'category': categoryController.text,
+      'bhavText': bhavController.text,
       'makingType': makingTypeController.text,
       'makingChargeText': makingChargeController.text,
       'grossWeightText': grossWeightController.text,
@@ -4669,6 +3708,7 @@ class _NewItemDraft {
   void dispose() {
     nameController.dispose();
     categoryController.dispose();
+    bhavController.dispose();
     makingTypeController.dispose();
     makingChargeController.dispose();
     grossWeightController.dispose();
@@ -4682,6 +3722,7 @@ class _NewItemEditor extends StatelessWidget {
   const _NewItemEditor({
     required this.index,
     required this.item,
+    required this.effectiveBhav,
     required this.amount,
     required this.baseAmount,
     required this.gstAmount,
@@ -4694,6 +3735,7 @@ class _NewItemEditor extends StatelessWidget {
 
   final int index;
   final _NewItemDraft item;
+  final double effectiveBhav;
   final double amount;
   final double baseAmount;
   final double gstAmount;
@@ -4809,6 +3851,25 @@ class _NewItemEditor extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
+                    controller: item.bhavController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: decimalInput,
+                    decoration: const InputDecoration(
+                      labelText: 'Bhav',
+                      hintText: 'Optional manual rate',
+                    ),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
                     controller: item.makingChargeController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
@@ -4821,6 +3882,20 @@ class _NewItemEditor extends StatelessWidget {
                       suffixText: item.makingType == 'Percentage' ? '%' : null,
                     ),
                     onChanged: (_) => onChanged(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Applied Bhav',
+                    ),
+                    child: Text(
+                      _formatCurrency(effectiveBhav),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ],
