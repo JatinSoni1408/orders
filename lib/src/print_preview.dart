@@ -1768,6 +1768,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
     try {
       final document = pw.Document();
       pw.MemoryImage? shreeHeaderImage;
+      pw.MemoryImage? phoneIconImage;
       try {
         final shreeHeaderBytes = await _buildShreeHeaderImage().timeout(
           const Duration(seconds: 2),
@@ -1777,6 +1778,16 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         }
       } catch (_) {
         shreeHeaderImage = null;
+      }
+      try {
+        final phoneIconBytes = await _buildPhoneIconImage().timeout(
+          const Duration(seconds: 2),
+        );
+        if (phoneIconBytes.isNotEmpty) {
+          phoneIconImage = pw.MemoryImage(phoneIconBytes);
+        }
+      } catch (_) {
+        phoneIconImage = null;
       }
 
       final pageFormat = PdfPageFormat.a5;
@@ -1821,6 +1832,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         String value, {
         bool roundedBorder = true,
         bool inlineValue = false,
+        bool centerContent = false,
       }) {
         return pw.Container(
           padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -1847,14 +1859,31 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   ],
                 )
               : pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  crossAxisAlignment: centerContent
+                      ? pw.CrossAxisAlignment.center
+                      : pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Text(label, style: labelStyle),
+                    pw.Text(
+                      label,
+                      style: labelStyle,
+                      textAlign: centerContent
+                          ? pw.TextAlign.center
+                          : pw.TextAlign.left,
+                    ),
                     pw.SizedBox(height: 2),
                     pw.Container(
                       height: compactValueFontSize + 2,
-                      alignment: pw.Alignment.centerLeft,
-                      child: pw.Text(value, style: valueStyle, maxLines: 1),
+                      alignment: centerContent
+                          ? pw.Alignment.center
+                          : pw.Alignment.centerLeft,
+                      child: pw.Text(
+                        value,
+                        style: valueStyle,
+                        maxLines: 1,
+                        textAlign: centerContent
+                            ? pw.TextAlign.center
+                            : pw.TextAlign.left,
+                      ),
                     ),
                   ],
                 ),
@@ -1970,22 +1999,46 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   children: [
                     pw.Expanded(
                       flex: 2,
-                      child: infoCell(
-                        'Name',
-                        customerName,
-                        roundedBorder: false,
+                      child: pw.Row(
+                        children: [
+                          pw.Expanded(
+                            flex: 3,
+                            child: infoCell(
+                              'NAME',
+                              customerName,
+                              roundedBorder: false,
+                              inlineValue: true,
+                            ),
+                          ),
+                          pw.SizedBox(width: 6),
+                          pw.Expanded(
+                            flex: 2,
+                            child: pw.Container(
+                              alignment: pw.Alignment.centerRight,
+                              child: pw.Row(
+                                mainAxisSize: pw.MainAxisSize.min,
+                                children: [
+                                  if (phoneIconImage != null)
+                                    pw.Image(
+                                      phoneIconImage,
+                                      width: compactLabelFontSize + 5,
+                                      height: compactLabelFontSize + 5,
+                                    )
+                                  else
+                                    pw.Text('Call:', style: labelStyle),
+                                  pw.SizedBox(width: 4),
+                                  pw.Text(
+                                    customerMobile,
+                                    style: valueStyle,
+                                    textAlign: pw.TextAlign.right,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    pw.SizedBox(width: 8),
-                    pw.Expanded(
-                      child: infoCell(
-                        'Status',
-                        statusLabel,
-                        roundedBorder: false,
-                      ),
-                    ),
-                    pw.SizedBox(width: 8),
-                    pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
                   ],
                 ),
                 pw.SizedBox(height: 6),
@@ -1993,43 +2046,26 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     pw.Expanded(
-                      child: infoCell(
-                        'Whatsapp Number',
-                        customerMobile,
-                        roundedBorder: false,
-                        inlineValue: true,
-                      ),
+                      child: infoCell('Purity', purity, centerContent: true),
                     ),
                     pw.SizedBox(width: 8),
                     pw.Expanded(
-                      child: infoCell(
-                        'Alternate Mobile',
-                        alternateMobile,
-                        roundedBorder: false,
-                        inlineValue: true,
-                      ),
+                      child: infoCell('Making', making, centerContent: true),
                     ),
-                  ],
-                ),
-                pw.SizedBox(height: 6),
-                pw.Row(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Expanded(child: infoCell('Purity', purity)),
                     pw.SizedBox(width: 8),
-                    pw.Expanded(child: infoCell('Making', making)),
-                    pw.SizedBox(width: 8),
-                    pw.Expanded(child: infoCell('GST', gst)),
+                    pw.Expanded(
+                      child: infoCell('GST', gst, centerContent: true),
+                    ),
                   ],
                 ),
                 pw.SizedBox(height: 8),
                 pw.Table(
                   border: pw.TableBorder.all(color: PdfColors.grey400),
                   columnWidths: {
-                    0: const pw.FixedColumnWidth(20),
+                    0: const pw.FixedColumnWidth(56),
                     1: const pw.FixedColumnWidth(34),
                     2: pw.FixedColumnWidth(itemNameColumnWidth),
-                    3: const pw.FixedColumnWidth(20),
+                    3: const pw.FixedColumnWidth(34),
                     4: const pw.FixedColumnWidth(44),
                     5: const pw.FlexColumnWidth(1.4),
                   },
@@ -2042,7 +2078,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                       ),
                       children: [
                         tableCell(
-                          'S No.',
+                          'Serial Number',
                           style: tableHeaderStyle,
                           backgroundColor: PdfColors.grey200,
                         ),
@@ -2057,7 +2093,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                           backgroundColor: PdfColors.grey200,
                         ),
                         tableCell(
-                          'Qty',
+                          'Quantity',
                           style: tableHeaderStyle,
                           alignment: pw.Alignment.center,
                           backgroundColor: PdfColors.grey200,
@@ -2163,6 +2199,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                           child: infoCell(
                             category,
                             '${_formatWeight3(_categoryWeightFor(category))} gm',
+                            centerContent: true,
                           ),
                         ),
                         if (category != 'Silver') pw.SizedBox(width: 6),
@@ -2172,10 +2209,26 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                 if (_categoryWeightEntries.isNotEmpty) pw.SizedBox(height: 8),
                 pw.Row(
                   children: [
-                    pw.Spacer(),
                     pw.Expanded(
-                      flex: 2,
-                      child: infoCell('Estimated Weight', totalWeight),
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerLeft,
+                        child: infoCell(
+                          'Delivery Date',
+                          deliveryDate,
+                          centerContent: true,
+                        ),
+                      ),
+                    ),
+                    pw.SizedBox(width: 8),
+                    pw.Expanded(
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: infoCell(
+                          'Estimated Weight',
+                          totalWeight,
+                          centerContent: true,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -2202,6 +2255,35 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
 
       return document.save();
     }
+  }
+
+  Future<Uint8List> _buildPhoneIconImage() async {
+    const iconSize = 18.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.phone.codePoint),
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: iconSize,
+          fontFamily: Icons.phone.fontFamily,
+          package: Icons.phone.fontPackage,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(canvas, Offset.zero);
+    final image = await recorder.endRecording().toImage(
+      textPainter.width <= 0 ? 1 : textPainter.width.ceil(),
+      textPainter.height <= 0 ? 1 : textPainter.height.ceil(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return Uint8List(0);
+    }
+    return byteData.buffer.asUint8List();
   }
 
   Future<Uint8List> _buildShreeHeaderImage() async {
