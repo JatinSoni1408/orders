@@ -55,8 +55,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       TextEditingController();
   final TextEditingController _estimateAlternateMobileController =
       TextEditingController();
-  final TextEditingController _estimateOccasionController =
-      TextEditingController();
   final TextEditingController _newItemsGold22RateController =
       TextEditingController();
   final TextEditingController _newItemsGold18RateController =
@@ -79,7 +77,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
-  DateTime _estimateOccasionDate = DateTime.now();
   String? _editingOrderId;
   DateTime? _editingOrderCreatedAt;
   String _searchQuery = '';
@@ -221,15 +218,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   String get _estimateAlternateMobile {
     final mobile = _estimateAlternateMobileController.text.trim();
     return mobile.isEmpty ? '-' : mobile;
-  }
-
-  String get _estimateOccasion {
-    final occasion = _estimateOccasionController.text.trim();
-    return occasion.isEmpty ? '-' : occasion;
-  }
-
-  String get _estimateOccasionDateLabel {
-    return DateFormat('dd/MM/yyyy').format(_estimateOccasionDate);
   }
 
   String get _estimateDeliveryDateLabel {
@@ -538,7 +526,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _estimateCustomerNameController,
       _estimateCustomerMobileController,
       _estimateAlternateMobileController,
-      _estimateOccasionController,
     ]) {
       controller.addListener(_schedulePersistence);
     }
@@ -642,10 +629,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         'customerName': _estimateCustomerNameController.text,
         'customerMobile': _estimateCustomerMobileController.text,
         'alternateMobile': _estimateAlternateMobileController.text,
-        'occasion': _estimateOccasionController.text,
         'status': _estimateStatus.name,
         'deliveryDate': _estimateDeliveryDate.toIso8601String(),
-        'occasionDate': _estimateOccasionDate.toIso8601String(),
         'advanceItems': _advanceItems.map((item) => item.toJson()).toList(),
         'advanceOldItems': _advanceOldItems
             .map((item) => item.toJson())
@@ -748,8 +733,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               decodedEstimate['customerMobile'] as String? ?? '';
           _estimateAlternateMobileController.text =
               decodedEstimate['alternateMobile'] as String? ?? '';
-          _estimateOccasionController.text =
-              decodedEstimate['occasion'] as String? ?? '';
           _newItemsGold22RateController.text =
               decodedEstimate['newItemsGold22Rate'] as String? ?? '';
           _newItemsGold18RateController.text =
@@ -761,9 +744,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           );
           _estimateDeliveryDate =
               _dateTimeFromJson(decodedEstimate['deliveryDate']) ??
-              DateTime.now();
-          _estimateOccasionDate =
-              _dateTimeFromJson(decodedEstimate['occasionDate']) ??
               DateTime.now();
           _editingOrderId = decodedEstimate['editingOrderId'] as String?;
           _editingOrderCreatedAt = _dateTimeFromJson(
@@ -856,7 +836,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _editingOrderCreatedAt = null;
     _estimateDate = DateTime.now();
     _estimateDeliveryDate = DateTime.now();
-    _estimateOccasionDate = DateTime.now();
     _estimatePurityController.text = '22K';
     _estimateGstController.text = '3';
     _estimateMakingController.text = '15';
@@ -864,7 +843,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.clear();
     _estimateCustomerMobileController.clear();
     _estimateAlternateMobileController.clear();
-    _estimateOccasionController.clear();
     _showEstimateNameError = false;
     _showEstimateMobileError = false;
     _showEstimateAlternateMobileError = false;
@@ -908,7 +886,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _editingOrderCreatedAt = order.createdAt;
     _estimateDate = DateTime.now();
     _estimateDeliveryDate = order.deliveryDate ?? DateTime.now();
-    _estimateOccasionDate = order.occasionDate ?? DateTime.now();
     _estimatePurityController.text = order.estimatePurity ?? '22K';
     _estimateGstController.text = (order.estimateGst ?? 3).toString();
     _estimateMakingController.text = (order.estimateMaking ?? 15).toString();
@@ -916,7 +893,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.text = order.customer;
     _estimateCustomerMobileController.text = order.customerPhone ?? '';
     _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
-    _estimateOccasionController.text = order.occasion ?? '';
     _showEstimateNameError = false;
     _showEstimateMobileError = false;
     _showEstimateAlternateMobileError = false;
@@ -1136,10 +1112,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       estimateWeightRange: _estimateWeightRangeController.text.trim().isEmpty
           ? null
           : _estimateWeightRangeController.text.trim(),
-      occasion: _estimateOccasionController.text.trim().isEmpty
-          ? null
-          : _estimateOccasionController.text.trim(),
-      occasionDate: _estimateOccasionDate,
       deliveryDate: _estimateDeliveryDate,
     );
 
@@ -1284,8 +1256,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             customerMobile: _estimateCustomerMobile,
             alternateMobile: _estimateAlternateMobile,
             statusLabel: _estimateStatus.label,
-            occasion: _estimateOccasion,
-            occasionDate: _estimateOccasionDateLabel,
             deliveryDate: _estimateDeliveryDateLabel,
             purity: _estimatePurity,
             making: _estimateMaking.toStringAsFixed(2),
@@ -1366,8 +1336,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       customerMobile: _estimateCustomerMobile,
       alternateMobile: _estimateAlternateMobile,
       statusLabel: _estimateStatus.label,
-      occasion: _estimateOccasion,
-      occasionDate: _estimateOccasionDateLabel,
       deliveryDate: _estimateDeliveryDateLabel,
       purity: _estimatePurity,
       making: _estimateMaking.toStringAsFixed(2),
@@ -1462,8 +1430,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             estimateGst: existingOrder.estimateGst,
             estimateMaking: existingOrder.estimateMaking,
             estimateWeightRange: existingOrder.estimateWeightRange,
-            occasion: existingOrder.occasion,
-            occasionDate: existingOrder.occasionDate,
             deliveryDate: existingOrder.deliveryDate,
           );
         }
@@ -1747,43 +1713,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _estimateOccasionController,
-                            decoration: const InputDecoration(
-                              labelText: 'Occasion',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Date of Occasion',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              const SizedBox(height: 6),
-                              _DateField(
-                                date: _estimateOccasionDate,
-                                onDateSelected: (selected) {
-                                  setState(() {
-                                    _estimateOccasionDate = selected;
-                                  });
-                                  _schedulePersistence();
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
                 ),
               ),
@@ -2047,43 +1976,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                               errorText: _estimateAlternateMobileError,
                             ),
                             onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _estimateOccasionController,
-                            decoration: const InputDecoration(
-                              labelText: 'Occasion',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Date of Occasion',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              const SizedBox(height: 6),
-                              _DateField(
-                                date: _estimateOccasionDate,
-                                onDateSelected: (selected) {
-                                  setState(() {
-                                    _estimateOccasionDate = selected;
-                                  });
-                                  _schedulePersistence();
-                                },
-                              ),
-                            ],
                           ),
                         ),
                       ],
@@ -2867,7 +2759,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.dispose();
     _estimateCustomerMobileController.dispose();
     _estimateAlternateMobileController.dispose();
-    _estimateOccasionController.dispose();
     _newItemsGold22RateController.dispose();
     _newItemsGold18RateController.dispose();
     _newItemsSilverRateController.dispose();

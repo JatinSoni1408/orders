@@ -138,8 +138,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     required this.customerMobile,
     required this.alternateMobile,
     required this.statusLabel,
-    required this.occasion,
-    required this.occasionDate,
     required this.deliveryDate,
     required this.purity,
     required this.making,
@@ -169,8 +167,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
   final String customerMobile;
   final String alternateMobile;
   final String statusLabel;
-  final String occasion;
-  final String occasionDate;
   final String deliveryDate;
   final String purity;
   final String making;
@@ -1480,10 +1476,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                     child: infoCell('Alternate Mobile', alternateMobile),
                   ),
                   pw.SizedBox(width: 6),
-                  pw.Expanded(child: infoCell('Occasion', occasion)),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(child: infoCell('Occasion Date', occasionDate)),
-                  pw.SizedBox(width: 6),
                   pw.Expanded(
                     child: infoCell(
                       'Rates',
@@ -1671,8 +1663,6 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
     required this.customerMobile,
     required this.alternateMobile,
     required this.statusLabel,
-    required this.occasion,
-    required this.occasionDate,
     required this.deliveryDate,
     required this.purity,
     required this.making,
@@ -1686,8 +1676,6 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
   final String customerMobile;
   final String alternateMobile;
   final String statusLabel;
-  final String occasion;
-  final String occasionDate;
   final String deliveryDate;
   final String purity;
   final String making;
@@ -1828,25 +1816,48 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         color: PdfColors.black,
       );
 
-      pw.Widget infoCell(String label, String value) {
+      pw.Widget infoCell(
+        String label,
+        String value, {
+        bool roundedBorder = true,
+        bool inlineValue = false,
+      }) {
         return pw.Container(
           padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: PdfColors.grey300),
-            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-          ),
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Text(label, style: labelStyle),
-              pw.SizedBox(height: 2),
-              pw.Container(
-                height: compactValueFontSize + 2,
-                alignment: pw.Alignment.centerLeft,
-                child: pw.Text(value, style: valueStyle, maxLines: 1),
-              ),
-            ],
-          ),
+          decoration: roundedBorder
+              ? pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey300),
+                  borderRadius: const pw.BorderRadius.all(
+                    pw.Radius.circular(6),
+                  ),
+                )
+              : null,
+          child: inlineValue
+              ? pw.Row(
+                  children: [
+                    pw.Text('$label: ', style: labelStyle),
+                    pw.Expanded(
+                      child: pw.Text(
+                        value,
+                        style: valueStyle,
+                        maxLines: 1,
+                        textAlign: pw.TextAlign.left,
+                      ),
+                    ),
+                  ],
+                )
+              : pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text(label, style: labelStyle),
+                    pw.SizedBox(height: 2),
+                    pw.Container(
+                      height: compactValueFontSize + 2,
+                      alignment: pw.Alignment.centerLeft,
+                      child: pw.Text(value, style: valueStyle, maxLines: 1),
+                    ),
+                  ],
+                ),
         );
       }
 
@@ -1957,9 +1968,22 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                 pw.Row(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
+                    pw.Expanded(
+                      flex: 2,
+                      child: infoCell(
+                        'Name',
+                        customerName,
+                        roundedBorder: false,
+                      ),
+                    ),
                     pw.SizedBox(width: 8),
-                    pw.Expanded(child: infoCell('Status', statusLabel)),
+                    pw.Expanded(
+                      child: infoCell(
+                        'Status',
+                        statusLabel,
+                        roundedBorder: false,
+                      ),
+                    ),
                     pw.SizedBox(width: 8),
                     pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
                   ],
@@ -1969,11 +1993,21 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     pw.Expanded(
-                      child: infoCell('Whatsapp Number', customerMobile),
+                      child: infoCell(
+                        'Whatsapp Number',
+                        customerMobile,
+                        roundedBorder: false,
+                        inlineValue: true,
+                      ),
                     ),
                     pw.SizedBox(width: 8),
                     pw.Expanded(
-                      child: infoCell('Alternate Mobile', alternateMobile),
+                      child: infoCell(
+                        'Alternate Mobile',
+                        alternateMobile,
+                        roundedBorder: false,
+                        inlineValue: true,
+                      ),
                     ),
                   ],
                 ),

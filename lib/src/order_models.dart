@@ -33,8 +33,6 @@ class Order {
     this.estimateGst,
     this.estimateMaking,
     this.estimateWeightRange,
-    this.occasion,
-    this.occasionDate,
     this.deliveryDate,
   }) : advancePayments = advancePayments ?? const [],
        oldItemReturns = oldItemReturns ?? const [],
@@ -56,8 +54,6 @@ class Order {
   final double? estimateGst;
   final double? estimateMaking;
   final String? estimateWeightRange;
-  final String? occasion;
-  final DateTime? occasionDate;
   final DateTime? deliveryDate;
 
   Map<String, dynamic> toJson() {
@@ -80,8 +76,6 @@ class Order {
       'estimateGst': estimateGst,
       'estimateMaking': estimateMaking,
       'estimateWeightRange': estimateWeightRange,
-      'occasion': occasion,
-      'occasionDate': occasionDate?.toIso8601String(),
       'deliveryDate': deliveryDate?.toIso8601String(),
     };
   }
@@ -115,8 +109,6 @@ class Order {
       estimateGst: (json['estimateGst'] as num?)?.toDouble(),
       estimateMaking: (json['estimateMaking'] as num?)?.toDouble(),
       estimateWeightRange: json['estimateWeightRange'] as String?,
-      occasion: json['occasion'] as String?,
-      occasionDate: _dateTimeFromJson(json['occasionDate']),
       deliveryDate: _dateTimeFromJson(json['deliveryDate']),
     );
   }
@@ -498,7 +490,7 @@ extension AdvanceModeX on AdvanceMode {
     }
   }
 }
- 
+
 extension OrderSortOptionX on OrderSortOption {
   String get label {
     switch (this) {
