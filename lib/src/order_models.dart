@@ -25,6 +25,7 @@ class Order {
     required this.createdAt,
     List<AdvancePayment>? advancePayments,
     List<OldItemReturn>? oldItemReturns,
+    List<NewOrderItem>? newItems,
     this.customerPhone,
     this.altCustomerPhone,
     this.customerPhotoPath,
@@ -36,7 +37,8 @@ class Order {
     this.occasionDate,
     this.deliveryDate,
   }) : advancePayments = advancePayments ?? const [],
-       oldItemReturns = oldItemReturns ?? const [];
+       oldItemReturns = oldItemReturns ?? const [],
+       newItems = newItems ?? const [];
 
   final String id;
   final String customer;
@@ -46,6 +48,7 @@ class Order {
   final DateTime createdAt;
   final List<AdvancePayment> advancePayments;
   final List<OldItemReturn> oldItemReturns;
+  final List<NewOrderItem> newItems;
   final String? customerPhone;
   final String? altCustomerPhone;
   final String? customerPhotoPath;
@@ -69,6 +72,7 @@ class Order {
           .map((payment) => payment.toJson())
           .toList(),
       'oldItemReturns': oldItemReturns.map((item) => item.toJson()).toList(),
+      'newItems': newItems.map((item) => item.toJson()).toList(),
       'customerPhone': customerPhone,
       'altCustomerPhone': altCustomerPhone,
       'customerPhotoPath': customerPhotoPath,
@@ -89,7 +93,7 @@ class Order {
       items: (json['items'] as List<dynamic>)
           .map((item) => OrderItem.fromJson(item as Map<String, dynamic>))
           .toList(),
-      total: (json['total'] as num).toDouble(),
+      total: (json['total'] as num?)?.toDouble() ?? 0,
       status: _orderStatusFromName(json['status'] as String),
       createdAt: _dateTimeFromJson(json['createdAt']) ?? DateTime.now(),
       advancePayments: (json['advancePayments'] as List<dynamic>? ?? const [])
@@ -100,6 +104,9 @@ class Order {
           .toList(),
       oldItemReturns: (json['oldItemReturns'] as List<dynamic>? ?? const [])
           .map((item) => OldItemReturn.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      newItems: (json['newItems'] as List<dynamic>? ?? const [])
+          .map((item) => NewOrderItem.fromJson(item as Map<String, dynamic>))
           .toList(),
       customerPhone: json['customerPhone'] as String?,
       altCustomerPhone: json['altCustomerPhone'] as String?,
@@ -236,6 +243,63 @@ class AdvancePayment {
       making: (json['making'] as num).toDouble(),
       weight: (json['weight'] as num).toDouble(),
       chequeNumber: json['chequeNumber'] as String?,
+    );
+  }
+}
+
+class NewOrderItem {
+  const NewOrderItem({
+    required this.name,
+    required this.category,
+    required this.makingType,
+    required this.makingCharge,
+    required this.grossWeight,
+    required this.lessWeight,
+    required this.additionalCharge,
+    required this.gstEnabled,
+    this.notes,
+  });
+
+  final String name;
+  final String category;
+  final String makingType;
+  final double makingCharge;
+  final double grossWeight;
+  final double lessWeight;
+  final double additionalCharge;
+  final bool gstEnabled;
+  final String? notes;
+
+  double get netWeight {
+    final value = grossWeight - lessWeight;
+    return value > 0 ? value : 0;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'category': category,
+      'makingType': makingType,
+      'makingCharge': makingCharge,
+      'grossWeight': grossWeight,
+      'lessWeight': lessWeight,
+      'additionalCharge': additionalCharge,
+      'gstEnabled': gstEnabled,
+      'notes': notes,
+    };
+  }
+
+  factory NewOrderItem.fromJson(Map<String, dynamic> json) {
+    return NewOrderItem(
+      name: json['name'] as String? ?? '',
+      category: json['category'] as String? ?? 'Gold22kt',
+      makingType: json['makingType'] as String? ?? 'Percentage',
+      makingCharge: (json['makingCharge'] as num?)?.toDouble() ?? 0,
+      grossWeight: (json['grossWeight'] as num?)?.toDouble() ?? 0,
+      lessWeight: (json['lessWeight'] as num?)?.toDouble() ?? 0,
+      additionalCharge: (json['additionalCharge'] as num?)?.toDouble() ?? 0,
+      gstEnabled: json['gstEnabled'] as bool? ?? true,
+      notes: json['notes'] as String?,
     );
   }
 }

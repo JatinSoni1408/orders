@@ -17,6 +17,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     'JW-2048',
     'JW-2049',
   };
+  static const List<String> _newItemCategoryOptions = [
+    'Gold22kt',
+    'Gold18kt',
+    'Silver',
+  ];
+  static const List<String> _goldMakingTypeOptions = [
+    'FixRate',
+    'Percentage',
+    'TotalMaking',
+  ];
+  static const List<String> _silverMakingTypeOptions = [
+    'PerGram',
+    'TotalMaking',
+    'FixRate',
+  ];
   final List<Order> _orders = [];
 
   OrderStatus? _selectedStatus;
@@ -42,12 +57,19 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       TextEditingController();
   final TextEditingController _estimateOccasionController =
       TextEditingController();
+  final TextEditingController _newItemsGold22RateController =
+      TextEditingController();
+  final TextEditingController _newItemsGold18RateController =
+      TextEditingController();
+  final TextEditingController _newItemsSilverRateController =
+      TextEditingController();
   final FocusNode _estimateCustomerNameFocusNode = FocusNode();
   final FocusNode _estimateCustomerMobileFocusNode = FocusNode();
   final FocusNode _estimateAlternateMobileFocusNode = FocusNode();
   final List<_EstimateItemDraft> _estimateItems = [_EstimateItemDraft()];
   final List<_AdvanceValuationDraft> _advanceItems = [_AdvanceValuationDraft()];
   final List<_AdvanceOldItemDraft> _advanceOldItems = [_AdvanceOldItemDraft()];
+  final List<_NewItemDraft> _newItems = [_NewItemDraft()];
   Timer? _estimateClockTimer;
   Timer? _persistDebounceTimer;
   bool _showEstimateNameError = false;
@@ -75,6 +97,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
     for (final item in _advanceOldItems) {
       _attachAdvanceOldItemListeners(item);
+    }
+    _attachNewItemFieldListeners();
+    for (final item in _newItems) {
+      _attachNewItemListeners(item);
     }
     _estimateClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) {
@@ -369,6 +395,115 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         .toList();
   }
 
+  List<_NewItemDraft> get _populatedNewItems {
+    return _newItems.where((item) => !item.isEmpty).toList();
+  }
+
+  List<String> _makingTypeOptionsFor(String category) {
+    if (category == 'Silver') {
+      return _silverMakingTypeOptions;
+    }
+    return _goldMakingTypeOptions;
+  }
+
+  String _newItemCategoryLabel(String category) {
+    switch (category) {
+      case 'Gold22kt':
+        return '22K';
+      case 'Gold18kt':
+        return '18K';
+      case 'Silver':
+        return 'Silver';
+      default:
+        return category;
+    }
+  }
+
+  double _parseNewItemText(String value) {
+    final cleaned = value.replaceAll(',', '').replaceAll('%', '').trim();
+    return double.tryParse(cleaned) ?? 0;
+  }
+
+  double _newItemRateForCategory(String category) {
+    switch (category) {
+      case 'Gold22kt':
+        return _parseNewItemText(_newItemsGold22RateController.text);
+      case 'Gold18kt':
+        return _parseNewItemText(_newItemsGold18RateController.text);
+      case 'Silver':
+        return _parseNewItemText(_newItemsSilverRateController.text);
+      default:
+        return 0;
+    }
+  }
+
+  double _newItemBaseAmount(_NewItemDraft item) {
+    final rate = _newItemRateForCategory(item.category);
+    switch (item.makingType) {
+      case 'FixRate':
+        return item.makingCharge;
+      case 'PerGram':
+        return (rate + item.makingCharge) * item.netWeight;
+      case 'Percentage':
+        return (rate + (rate * (item.makingCharge / 100))) * item.netWeight;
+      case 'TotalMaking':
+        return (rate * item.netWeight) + item.makingCharge;
+      default:
+        return (rate * item.netWeight) + item.makingCharge;
+    }
+  }
+
+  double _newItemGstAmount(_NewItemDraft item) {
+    if (!item.gstEnabled || item.makingType == 'FixRate') {
+      return 0;
+    }
+    return _newItemBaseAmount(item) * (_estimateGst / 100);
+  }
+
+  double _newItemTotalAmount(_NewItemDraft item) {
+    final total =
+        _newItemBaseAmount(item) +
+        _newItemGstAmount(item) +
+        item.additionalCharge;
+    return total > 0 ? total : 0;
+  }
+
+  double get _newItemsSubtotal {
+    return _populatedNewItems.fold<double>(
+      0,
+      (sum, item) => sum + _newItemBaseAmount(item) + item.additionalCharge,
+    );
+  }
+
+  double get _newItemsTotalGst {
+    return _populatedNewItems.fold<double>(
+      0,
+      (sum, item) => sum + _newItemGstAmount(item),
+    );
+  }
+
+  double get _newItemsGrandTotal {
+    return _populatedNewItems.fold<double>(
+      0,
+      (sum, item) => sum + _newItemTotalAmount(item),
+    );
+  }
+
+  List<MapEntry<String, double>> get _newItemsCategoryTotalEntries {
+    final totals = <String, double>{};
+    for (final item in _populatedNewItems) {
+      final label = _newItemCategoryLabel(item.category);
+      totals.update(
+        label,
+        (value) => value + _newItemTotalAmount(item),
+        ifAbsent: () => _newItemTotalAmount(item),
+      );
+    }
+    final entries = totals.entries.toList();
+    entries.sort((a, b) => a.key.compareTo(b.key));
+    return entries;
+  }
+
   List<_EstimateItemDraft> get _sortedEstimateItems {
     const purityOrder = {'22K': 0, '18K': 1, 'Silver': 2};
     final items = _estimateItems.where((item) => !item.isEmpty).toList();
@@ -444,6 +579,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
   }
 
+  void _attachNewItemFieldListeners() {
+    for (final controller in [
+      _newItemsGold22RateController,
+      _newItemsGold18RateController,
+      _newItemsSilverRateController,
+    ]) {
+      controller.addListener(_schedulePersistence);
+    }
+  }
+
   void _attachEstimateItemListeners(_EstimateItemDraft item) {
     for (final controller in [
       item.nameController,
@@ -454,6 +599,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       item.lessWeightController,
       item.sizeController,
       item.lengthController,
+      item.notesController,
+    ]) {
+      controller.addListener(_schedulePersistence);
+    }
+  }
+
+  void _attachNewItemListeners(_NewItemDraft item) {
+    for (final controller in [
+      item.nameController,
+      item.categoryController,
+      item.makingTypeController,
+      item.makingChargeController,
+      item.grossWeightController,
+      item.lessWeightController,
+      item.additionalChargeController,
       item.notesController,
     ]) {
       controller.addListener(_schedulePersistence);
@@ -524,6 +684,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         'advanceOldItems': _advanceOldItems
             .map((item) => item.toJson())
             .toList(),
+        'newItemsGold22Rate': _newItemsGold22RateController.text,
+        'newItemsGold18Rate': _newItemsGold18RateController.text,
+        'newItemsSilverRate': _newItemsSilverRateController.text,
+        'newItems': _newItems.map((item) => item.toJson()).toList(),
         'editingOrderId': _editingOrderId,
         'editingOrderCreatedAt': _editingOrderCreatedAt?.toIso8601String(),
         'items': _estimateItems.map((item) => item.toJson()).toList(),
@@ -585,6 +749,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     ),
                   )
                   .toList();
+          final restoredNewItems =
+              (decodedEstimate['newItems'] as List<dynamic>? ?? const [])
+                  .map(
+                    (item) =>
+                        _NewItemDraft.fromJson(item as Map<String, dynamic>),
+                  )
+                  .toList();
 
           _selectedSection = AppSection.orders;
 
@@ -613,6 +784,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               decodedEstimate['alternateMobile'] as String? ?? '';
           _estimateOccasionController.text =
               decodedEstimate['occasion'] as String? ?? '';
+          _newItemsGold22RateController.text =
+              decodedEstimate['newItemsGold22Rate'] as String? ?? '';
+          _newItemsGold18RateController.text =
+              decodedEstimate['newItemsGold18Rate'] as String? ?? '';
+          _newItemsSilverRateController.text =
+              decodedEstimate['newItemsSilverRate'] as String? ?? '';
           _estimateStatus = _orderStatusFromName(
             decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
           );
@@ -671,6 +848,19 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
           for (final item in _advanceOldItems) {
             _attachAdvanceOldItemListeners(item);
+          }
+
+          for (final item in _newItems) {
+            item.dispose();
+          }
+          _newItems
+            ..clear()
+            ..addAll(
+              restoredNewItems.isEmpty ? [_NewItemDraft()] : restoredNewItems,
+            );
+
+          for (final item in _newItems) {
+            _attachNewItemListeners(item);
           }
         }
       });
@@ -737,6 +927,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       ..clear()
       ..add(_AdvanceOldItemDraft());
     _attachAdvanceOldItemListeners(_advanceOldItems.first);
+
+    for (final item in _newItems) {
+      item.dispose();
+    }
+    _newItems
+      ..clear()
+      ..add(_NewItemDraft());
+    _attachNewItemListeners(_newItems.first);
   }
 
   void _loadEstimateFromOrder(Order order) {
@@ -835,6 +1033,34 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final item in _advanceOldItems) {
       _attachAdvanceOldItemListeners(item);
     }
+
+    for (final item in _newItems) {
+      item.dispose();
+    }
+    _newItems
+      ..clear()
+      ..addAll(
+        order.newItems.isEmpty
+            ? [_NewItemDraft()]
+            : order.newItems
+                  .map(
+                    (item) => _NewItemDraft(
+                      name: item.name,
+                      category: item.category,
+                      makingType: item.makingType,
+                      makingChargeText: item.makingCharge.toString(),
+                      grossWeightText: item.grossWeight.toString(),
+                      lessWeightText: item.lessWeight.toString(),
+                      additionalChargeText: item.additionalCharge.toString(),
+                      gstEnabled: item.gstEnabled,
+                      notes: item.notes ?? '',
+                    ),
+                  )
+                  .toList(),
+      );
+    for (final item in _newItems) {
+      _attachNewItemListeners(item);
+    }
   }
 
   bool _validateEstimateForm() {
@@ -910,11 +1136,28 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             ),
           )
           .toList(),
-      total: 0,
+      total: _newItemsGrandTotal,
       status: _estimateStatus,
       createdAt: _editingOrderCreatedAt ?? DateTime.now(),
       advancePayments: _advancePaymentsForCurrentDraft,
       oldItemReturns: _advanceOldItemReturnsForCurrentDraft,
+      newItems: _populatedNewItems
+          .map(
+            (item) => NewOrderItem(
+              name: item.nameController.text.trim(),
+              category: item.category,
+              makingType: item.makingType,
+              makingCharge: item.makingCharge,
+              grossWeight: item.grossWeight,
+              lessWeight: item.lessWeight,
+              additionalCharge: item.additionalCharge,
+              gstEnabled: item.gstEnabled,
+              notes: item.notesController.text.trim().isEmpty
+                  ? null
+                  : item.notesController.text.trim(),
+            ),
+          )
+          .toList(),
       customerPhone: _estimateCustomerMobileController.text.trim(),
       altCustomerPhone: _estimateAlternateMobileController.text.trim().isEmpty
           ? null
@@ -1126,6 +1369,71 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
+  void _openNewItemsPrintPreview() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) {
+          return _NewItemsPrintPreviewSheet(
+            customerName: _estimateCustomerName,
+            customerMobile: _estimateCustomerMobile,
+            alternateMobile: _estimateAlternateMobile,
+            deliveryDate: _estimateDeliveryDateLabel,
+            gstRate: _estimateGst,
+            gold22Rate: _newItemRateForCategory('Gold22kt'),
+            gold18Rate: _newItemRateForCategory('Gold18kt'),
+            silverRate: _newItemRateForCategory('Silver'),
+            subtotal: _newItemsSubtotal,
+            totalGst: _newItemsTotalGst,
+            grandTotal: _newItemsGrandTotal,
+            items: _populatedNewItems,
+          );
+        },
+      ),
+    );
+  }
+
+  void _openCombinedBillPrintPreview() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) {
+          return _CombinedBillPrintPreviewSheet(
+            customerName: _estimateCustomerName,
+            customerMobile: _estimateCustomerMobile,
+            alternateMobile: _estimateAlternateMobile,
+            statusLabel: _estimateStatus.label,
+            occasion: _estimateOccasion,
+            occasionDate: _estimateOccasionDateLabel,
+            deliveryDate: _estimateDeliveryDateLabel,
+            purity: _estimatePurity,
+            making: _estimateMaking.toStringAsFixed(2),
+            gstRate: _estimateGst,
+            estimateTotalQuantity: _estimateTotalQuantity.toString(),
+            estimateWeightRange: _estimateWeightRangeLabel,
+            actualTotalGrossWeight: _formatWeightFixed3(
+              _actualTotalGrossWeight,
+            ),
+            actualTotalLessWeight: _formatWeightFixed3(_actualTotalLessWeight),
+            actualTotalNetWeight: _formatWeightFixed3(_actualTotalNetWeight),
+            advanceTotalAmount: _advanceTotalAmount,
+            advanceOldItemsTotalAmount: _advanceOldItemsTotalAmount,
+            advanceNetWeight: _advanceTotalNetWeight,
+            newItemsSubtotal: _newItemsSubtotal,
+            newItemsTotalGst: _newItemsTotalGst,
+            newItemsGrandTotal: _newItemsGrandTotal,
+            balanceAfterAdvance: _billPreviewBalanceAfterAdvance,
+            gold22Rate: _newItemRateForCategory('Gold22kt'),
+            gold18Rate: _newItemRateForCategory('Gold18kt'),
+            silverRate: _newItemRateForCategory('Silver'),
+            estimateItems: _sortedEstimateItems,
+            advanceItems: _populatedAdvanceItems,
+            oldItems: _populatedAdvanceOldItems,
+            newItems: _populatedNewItems,
+          );
+        },
+      ),
+    );
+  }
+
   bool _stepBackOrdersTab() {
     return false;
   }
@@ -1176,6 +1484,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             createdAt: existingOrder.createdAt,
             advancePayments: _advancePaymentsForCurrentDraft,
             oldItemReturns: _advanceOldItemReturnsForCurrentDraft,
+            newItems: existingOrder.newItems,
             customerPhone: existingOrder.customerPhone,
             altCustomerPhone: existingOrder.altCustomerPhone,
             customerPhotoPath: existingOrder.customerPhotoPath,
@@ -2271,22 +2580,25 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                 color: Colors.grey.shade200,
                               ),
                               children: const [
-                                _EstimateTableCell('S No.', isHeader: true),
+                                _EstimateTableCell(
+                                  'Serial No.',
+                                  isHeader: true,
+                                ),
                                 _EstimateTableCell('Purity', isHeader: true),
                                 _EstimateTableCell('Item Name', isHeader: true),
-                                _EstimateTableCell('Qty', isHeader: true),
+                                _EstimateTableCell('Quantity', isHeader: true),
                                 _EstimateTableCell(
-                                  'Gross',
+                                  'Gross Weight',
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
                                 _EstimateTableCell(
-                                  'Less',
+                                  'Less Weight',
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
                                 _EstimateTableCell(
-                                  'Nett',
+                                  'Nett Weight',
                                   isHeader: true,
                                   textAlign: TextAlign.right,
                                 ),
@@ -2581,58 +2893,932 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Widget _buildItemsBody(double contentTopPadding) {
+    final rateInputFormatters = [
+      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+    ];
+    final populatedNewItems = _populatedNewItems;
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Items',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'New Items',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Add manually priced items here. Totals update instantly and stay saved with your working draft.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _newItemsGold22RateController,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            inputFormatters: rateInputFormatters,
+                            decoration: const InputDecoration(
+                              labelText: '22K Rate',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _newItemsGold18RateController,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            inputFormatters: rateInputFormatters,
+                            decoration: const InputDecoration(
+                              labelText: '18K Rate',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: _newItemsSilverRateController,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            inputFormatters: rateInputFormatters,
+                            decoration: const InputDecoration(
+                              labelText: 'Silver Rate',
+                            ),
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withAlpha(10),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withAlpha(28),
+                        ),
+                      ),
+                      child: Text(
+                        'GST is using the same rate as Estimate: ${_estimateGst.toStringAsFixed(2)}%',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'This section is ready for item management next.',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
+              ),
             ),
-          ),
+            const SizedBox(height: 20),
+            Text(
+              'Priced Items',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Enter gross and less weight for each piece. Nett weight and line amount are calculated automatically.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 8),
+            ...List.generate(_newItems.length, (index) {
+              final item = _newItems[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _NewItemEditor(
+                  index: index + 1,
+                  item: item,
+                  amount: _newItemTotalAmount(item),
+                  baseAmount: _newItemBaseAmount(item),
+                  gstAmount: _newItemGstAmount(item),
+                  makingTypeOptions: _makingTypeOptionsFor(item.category),
+                  onChanged: () {
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onCategoryChanged: (value) {
+                    final options = _makingTypeOptionsFor(value);
+                    item.categoryController.text = value;
+                    if (!options.contains(item.makingType)) {
+                      item.makingTypeController.text = options.first;
+                    }
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onMakingTypeChanged: (value) {
+                    item.makingTypeController.text = value;
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onRemove: _newItems.length == 1
+                      ? null
+                      : () {
+                          setState(() {
+                            final removed = _newItems.removeAt(index);
+                            removed.dispose();
+                          });
+                          _schedulePersistence();
+                        },
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    final item = _NewItemDraft();
+                    _newItems.add(item);
+                    _attachNewItemListeners(item);
+                  });
+                  _schedulePersistence();
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Add new item'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'New Items Summary',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _EstimateSummaryRow(
+                      label: 'Items',
+                      value: populatedNewItems.length.toString(),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Base + Extras',
+                      value: _formatCurrency(_newItemsSubtotal),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'GST',
+                      value: _formatCurrency(_newItemsTotalGst),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Grand Total',
+                      value: _formatCurrency(_newItemsGrandTotal),
+                      emphasize: true,
+                    ),
+                    if (_newItemsCategoryTotalEntries.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        'By Category',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _newItemsCategoryTotalEntries
+                            .map(
+                              (entry) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      entry.key,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color: Colors.grey.shade700,
+                                          ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _formatCurrency(entry.value),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildBillPreviewBody(double contentTopPadding) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+  double get _advanceCombinedAmount {
+    return _advanceTotalAmount + _advanceOldItemsTotalAmount;
+  }
+
+  double get _billPreviewBalanceAfterAdvance {
+    return _newItemsGrandTotal - _advanceCombinedAmount;
+  }
+
+  Widget _buildBillPreviewSection({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBillPreviewEmptyState(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(message, style: Theme.of(context).textTheme.bodyMedium),
+    );
+  }
+
+  Widget _buildBillEstimateTable() {
+    if (_sortedEstimateItems.isEmpty) {
+      return _buildBillPreviewEmptyState(
+        'Estimate items will appear here once you add them in the Estimate tab.',
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        border: TableBorder.all(color: Colors.grey),
+        children: [
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade200),
+            children: const [
+              _EstimateTableCell('S No.', isHeader: true),
+              _EstimateTableCell('Purity', isHeader: true),
+              _EstimateTableCell('Item Name', isHeader: true),
+              _EstimateTableCell('Qty', isHeader: true),
+              _EstimateTableCell(
+                'Est. Weight',
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell('Notes', isHeader: true),
+            ],
+          ),
+          ..._sortedEstimateItems.asMap().entries.map(
+            (entry) => TableRow(
               children: [
-                Text(
-                  'Bill Preview',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                _EstimateTableCell('${entry.key + 1}'),
+                _EstimateTableCell(entry.value.purityController.text.trim()),
+                _EstimateTableCell(entry.value.nameController.text.trim()),
+                _EstimateTableCell(entry.value.quantityController.text.trim()),
+                _EstimateTableCell(
+                  _formatWeight3(entry.value.estimatedWeight),
+                  textAlign: TextAlign.right,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'This section is ready for bill preview work next.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                _EstimateTableCell(entry.value.notesController.text.trim()),
+              ],
+            ),
+          ),
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade100),
+            children: [
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell('Total', isHeader: true),
+              _EstimateTableCell(
+                _estimateTotalQuantity.toString(),
+                isHeader: true,
+              ),
+              _EstimateTableCell(
+                _formatWeight3(_estimateTotalEstimatedWeight),
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              const _EstimateTableCell(''),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillActualTable() {
+    if (_sortedEstimateItems.isEmpty) {
+      return _buildBillPreviewEmptyState(
+        'Actual item weights will appear here once you fill them in the Actual tab.',
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        border: TableBorder.all(color: Colors.grey),
+        children: [
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade200),
+            children: const [
+              _EstimateTableCell('Serial No.', isHeader: true),
+              _EstimateTableCell('Purity', isHeader: true),
+              _EstimateTableCell('Item Name', isHeader: true),
+              _EstimateTableCell('Quantity', isHeader: true),
+              _EstimateTableCell(
+                'Gross Weight',
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell(
+                'Less Weight',
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell(
+                'Nett Weight',
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell('Notes', isHeader: true),
+            ],
+          ),
+          ..._sortedEstimateItems.asMap().entries.map(
+            (entry) => TableRow(
+              children: [
+                _EstimateTableCell('${entry.key + 1}'),
+                _EstimateTableCell(entry.value.purityController.text.trim()),
+                _EstimateTableCell(entry.value.nameController.text.trim()),
+                _EstimateTableCell(entry.value.quantityController.text.trim()),
+                _EstimateTableCell(
+                  _formatWeightFixed3(entry.value.grossWeight),
+                  textAlign: TextAlign.right,
+                ),
+                _EstimateTableCell(
+                  _formatWeight3(entry.value.lessWeight),
+                  textAlign: TextAlign.right,
+                ),
+                _EstimateTableCell(
+                  _formatWeightFixed3(entry.value.actualNetWeight),
+                  textAlign: TextAlign.right,
+                ),
+                _EstimateTableCell(entry.value.notesController.text.trim()),
+              ],
+            ),
+          ),
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade100),
+            children: [
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell('Total', isHeader: true),
+              _EstimateTableCell(
+                _estimateTotalQuantity.toString(),
+                isHeader: true,
+              ),
+              _EstimateTableCell(
+                _formatWeightFixed3(_actualTotalGrossWeight),
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell(
+                _formatWeight3(_actualTotalLessWeight),
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              _EstimateTableCell(
+                _formatWeightFixed3(_actualTotalNetWeight),
+                isHeader: true,
+                textAlign: TextAlign.right,
+              ),
+              const _EstimateTableCell(''),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillAdvanceTables() {
+    if (_populatedAdvanceItems.isEmpty && _populatedAdvanceOldItems.isEmpty) {
+      return _buildBillPreviewEmptyState(
+        'Advance payments and old item returns will appear here once entered.',
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_populatedAdvanceItems.isNotEmpty) ...[
+          Text(
+            'Advance Entries',
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Table(
+              defaultColumnWidth: const IntrinsicColumnWidth(),
+              border: TableBorder.all(color: Colors.grey),
+              children: [
+                TableRow(
+                  decoration: BoxDecoration(color: Colors.grey.shade200),
+                  children: const [
+                    _EstimateTableCell('Date', isHeader: true),
+                    _EstimateTableCell('Mode', isHeader: true),
+                    _EstimateTableCell('Cheque No', isHeader: true),
+                    _EstimateTableCell('Amount', isHeader: true),
+                    _EstimateTableCell('Rate22kt', isHeader: true),
+                    _EstimateTableCell('Making %', isHeader: true),
+                    _EstimateTableCell('Net Weight', isHeader: true),
+                  ],
+                ),
+                ..._populatedAdvanceItems.map(
+                  (item) => TableRow(
+                    children: [
+                      _EstimateTableCell(_formatEntryDate(item.date)),
+                      _EstimateTableCell(item.mode.label),
+                      _EstimateTableCell(item.chequeNumber ?? '-'),
+                      _EstimateTableCell(_formatCurrency(item.amount)),
+                      _EstimateTableCell(_formatCurrency(item.rate)),
+                      _EstimateTableCell(
+                        '${item.rateMaking.toStringAsFixed(2)}%',
+                      ),
+                      _EstimateTableCell('${_formatWeight3(item.weight)} gm'),
+                    ],
+                  ),
+                ),
+                TableRow(
+                  decoration: BoxDecoration(color: Colors.grey.shade100),
+                  children: [
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell('Total', isHeader: true),
+                    const _EstimateTableCell(''),
+                    _EstimateTableCell(
+                      _formatCurrency(_advanceTotalAmount),
+                      isHeader: true,
+                    ),
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell(''),
+                    _EstimateTableCell(
+                      '${_formatWeight3(_advanceTotalNetWeight)} gm',
+                      isHeader: true,
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+        ],
+        if (_populatedAdvanceItems.isNotEmpty &&
+            _populatedAdvanceOldItems.isNotEmpty)
+          const SizedBox(height: 16),
+        if (_populatedAdvanceOldItems.isNotEmpty) ...[
+          Text(
+            'Old Item Returns',
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Table(
+              defaultColumnWidth: const IntrinsicColumnWidth(),
+              border: TableBorder.all(color: Colors.grey),
+              children: [
+                TableRow(
+                  decoration: BoxDecoration(color: Colors.grey.shade200),
+                  children: const [
+                    _EstimateTableCell('Date', isHeader: true),
+                    _EstimateTableCell('Item', isHeader: true),
+                    _EstimateTableCell('Return Rate', isHeader: true),
+                    _EstimateTableCell('Gross', isHeader: true),
+                    _EstimateTableCell('Less', isHeader: true),
+                    _EstimateTableCell('Nett', isHeader: true),
+                    _EstimateTableCell('Tanch', isHeader: true),
+                    _EstimateTableCell('Amount', isHeader: true),
+                  ],
+                ),
+                ..._populatedAdvanceOldItems.map(
+                  (item) => TableRow(
+                    children: [
+                      _EstimateTableCell(_formatEntryDate(item.date)),
+                      _EstimateTableCell(item.itemNameController.text.trim()),
+                      _EstimateTableCell(_formatCurrency(item.returnRate)),
+                      _EstimateTableCell(
+                        '${_formatWeight3(item.grossWeight)} gm',
+                      ),
+                      _EstimateTableCell(
+                        '${_formatWeight3(item.lessWeight)} gm',
+                      ),
+                      _EstimateTableCell(
+                        '${_formatWeight3(item.nettWeight)} gm',
+                      ),
+                      _EstimateTableCell('${_formatWeight3(item.tanch)}%'),
+                      _EstimateTableCell(_formatCurrency(item.amount)),
+                    ],
+                  ),
+                ),
+                TableRow(
+                  decoration: BoxDecoration(color: Colors.grey.shade100),
+                  children: [
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell('Total', isHeader: true),
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell(''),
+                    const _EstimateTableCell(''),
+                    _EstimateTableCell(
+                      _formatCurrency(_advanceOldItemsTotalAmount),
+                      isHeader: true,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildBillNewItemsTable() {
+    if (_populatedNewItems.isEmpty) {
+      return _buildBillPreviewEmptyState(
+        'New item pricing lines will appear here once added in the New Items tab.',
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Table(
+        defaultColumnWidth: const IntrinsicColumnWidth(),
+        border: TableBorder.all(color: Colors.grey),
+        children: [
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade200),
+            children: const [
+              _EstimateTableCell('No.', isHeader: true),
+              _EstimateTableCell('Item Name', isHeader: true),
+              _EstimateTableCell('Category', isHeader: true),
+              _EstimateTableCell('Making Type', isHeader: true),
+              _EstimateTableCell('Making', isHeader: true),
+              _EstimateTableCell('Gross', isHeader: true),
+              _EstimateTableCell('Less', isHeader: true),
+              _EstimateTableCell('Nett', isHeader: true),
+              _EstimateTableCell('Additional', isHeader: true),
+              _EstimateTableCell('GST', isHeader: true),
+              _EstimateTableCell('Total', isHeader: true),
+              _EstimateTableCell('Notes', isHeader: true),
+            ],
+          ),
+          ..._populatedNewItems.asMap().entries.map(
+            (entry) => TableRow(
+              children: [
+                _EstimateTableCell('${entry.key + 1}'),
+                _EstimateTableCell(entry.value.nameController.text.trim()),
+                _EstimateTableCell(_newItemCategoryLabel(entry.value.category)),
+                _EstimateTableCell(entry.value.makingType),
+                _EstimateTableCell(_formatCurrency(entry.value.makingCharge)),
+                _EstimateTableCell(
+                  '${_formatWeightFixed3(entry.value.grossWeight)} gm',
+                ),
+                _EstimateTableCell(
+                  '${_formatWeightFixed3(entry.value.lessWeight)} gm',
+                ),
+                _EstimateTableCell(
+                  '${_formatWeightFixed3(entry.value.netWeight)} gm',
+                ),
+                _EstimateTableCell(
+                  _formatCurrency(entry.value.additionalCharge),
+                ),
+                _EstimateTableCell(entry.value.gstEnabled ? 'Yes' : 'No'),
+                _EstimateTableCell(
+                  _formatCurrency(_newItemTotalAmount(entry.value)),
+                ),
+                _EstimateTableCell(entry.value.notesController.text.trim()),
+              ],
+            ),
+          ),
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade100),
+            children: [
+              const _EstimateTableCell(''),
+              const _EstimateTableCell('Total', isHeader: true),
+              _EstimateTableCell(
+                _populatedNewItems.length.toString(),
+                isHeader: true,
+              ),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              const _EstimateTableCell(''),
+              _EstimateTableCell(
+                _formatCurrency(_newItemsGrandTotal),
+                isHeader: true,
+              ),
+              const _EstimateTableCell(''),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillPreviewBody(double contentTopPadding) {
+    final balanceLabel = _billPreviewBalanceAfterAdvance < 0
+        ? 'Excess Advance'
+        : 'Balance After Advance';
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Generated Bill',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'This preview combines the current draft from Estimate, Actual, Advance, and New Items into one bill view.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withAlpha(10),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withAlpha(24),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Name',
+                                  value: _estimateCustomerName,
+                                  icon: Icons.person_outline,
+                                  maxLines: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Status',
+                                  value: _estimateStatus.label,
+                                  icon: Icons.info_outline,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Delivery Date',
+                                  value: _estimateDeliveryDateLabel,
+                                  icon: Icons.event_outlined,
+                                  singleLineValue: true,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Whatsapp Number',
+                                  value: _estimateCustomerMobile,
+                                  icon: Icons.call_outlined,
+                                  maxLines: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Alternate Mobile',
+                                  value: _estimateAlternateMobile,
+                                  icon: Icons.phone_forwarded_outlined,
+                                  maxLines: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryMetaTile(
+                                  label: 'Occasion',
+                                  value: _estimateOccasion,
+                                  icon: Icons.celebration_outlined,
+                                  maxLines: 2,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _EstimateSummaryInlineItem(
+                                  label: 'Purity',
+                                  value: _estimatePurity,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryInlineItem(
+                                  label: 'Making',
+                                  value: _estimateMaking.toStringAsFixed(2),
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _EstimateSummaryInlineItem(
+                                  label: 'GST',
+                                  value: '${_estimateGst.toStringAsFixed(2)}%',
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Bill Summary',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _EstimateSummaryRow(
+                      label: 'Estimated Weight Range',
+                      value: _estimateWeightRangeLabel,
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Actual Nett Weight',
+                      value: '${_formatWeightFixed3(_actualTotalNetWeight)} gm',
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Advance Credit',
+                      value: _formatCurrency(_advanceCombinedAmount),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'New Items Total',
+                      value: _formatCurrency(_newItemsGrandTotal),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: balanceLabel,
+                      value: _formatCurrency(
+                        _billPreviewBalanceAfterAdvance.abs(),
+                      ),
+                      emphasize: true,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildBillPreviewSection(
+              title: 'Estimate',
+              subtitle: 'Estimate preview data',
+              child: _buildBillEstimateTable(),
+            ),
+            const SizedBox(height: 16),
+            _buildBillPreviewSection(
+              title: 'Actual',
+              subtitle: 'Actual weight confirmation',
+              child: _buildBillActualTable(),
+            ),
+            const SizedBox(height: 16),
+            _buildBillPreviewSection(
+              title: 'Advance',
+              subtitle: 'Advance payments and old item returns',
+              child: _buildBillAdvanceTables(),
+            ),
+            const SizedBox(height: 16),
+            _buildBillPreviewSection(
+              title: 'New Items',
+              subtitle: 'Priced items added for billing',
+              child: _buildBillNewItemsTable(),
+            ),
+            const SizedBox(height: 12),
+          ],
         ),
       ),
     );
@@ -2652,6 +3838,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerMobileController.dispose();
     _estimateAlternateMobileController.dispose();
     _estimateOccasionController.dispose();
+    _newItemsGold22RateController.dispose();
+    _newItemsGold18RateController.dispose();
+    _newItemsSilverRateController.dispose();
     _estimateCustomerNameFocusNode.dispose();
     _estimateCustomerMobileFocusNode.dispose();
     _estimateAlternateMobileFocusNode.dispose();
@@ -2662,6 +3851,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       item.dispose();
     }
     for (final item in _advanceOldItems) {
+      item.dispose();
+    }
+    for (final item in _newItems) {
       item.dispose();
     }
     super.dispose();
@@ -2748,6 +3940,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 icon: const Icon(Icons.save_outlined),
                 tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
               ),
+            if (_selectedSection == AppSection.items)
+              IconButton(
+                onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+                icon: const Icon(Icons.save_outlined),
+                tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+              ),
             if (_selectedSection == AppSection.advance)
               IconButton(
                 onPressed: _saveAdvanceEntries,
@@ -2757,14 +3955,17 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             if (_selectedSection == AppSection.orders ||
                 _selectedSection == AppSection.estimateCalculator ||
                 _selectedSection == AppSection.advance ||
-                _selectedSection == AppSection.actual)
+                _selectedSection == AppSection.actual ||
+                _selectedSection == AppSection.items ||
+                _selectedSection == AppSection.billPreview)
               IconButton(
                 onPressed: switch (_selectedSection) {
                   AppSection.orders => _openPrintPreview,
                   AppSection.estimateCalculator => _openEstimatePrintPreview,
                   AppSection.advance => _openAdvancePrintPreview,
                   AppSection.actual => _openActualPrintPreview,
-                  _ => _openPrintPreview,
+                  AppSection.items => _openNewItemsPrintPreview,
+                  AppSection.billPreview => _openCombinedBillPrintPreview,
                 },
                 icon: const Icon(Icons.print_outlined),
                 tooltip: 'Print preview',
@@ -3313,6 +4514,471 @@ class _ActualItemEditor extends StatelessWidget {
                 style: Theme.of(
                   context,
                 ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: item.notesController,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Notes / Instructions',
+                hintText: 'Optional',
+              ),
+              onChanged: (_) => onChanged(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NewItemDraft {
+  _NewItemDraft({
+    String? name,
+    String? category,
+    String? makingType,
+    String? makingChargeText,
+    String? grossWeightText,
+    String? lessWeightText,
+    String? additionalChargeText,
+    this.gstEnabled = true,
+    String? notes,
+  }) : nameController = TextEditingController(text: name ?? ''),
+       categoryController = TextEditingController(text: category ?? 'Gold22kt'),
+       makingTypeController = TextEditingController(
+         text:
+             makingType ??
+             ((category ?? 'Gold22kt') == 'Silver' ? 'PerGram' : 'FixRate'),
+       ),
+       makingChargeController = TextEditingController(
+         text: makingChargeText ?? '',
+       ),
+       grossWeightController = TextEditingController(
+         text: grossWeightText ?? '',
+       ),
+       lessWeightController = TextEditingController(text: lessWeightText ?? ''),
+       additionalChargeController = TextEditingController(
+         text: additionalChargeText ?? '',
+       ),
+       notesController = TextEditingController(text: notes ?? '');
+
+  factory _NewItemDraft.fromJson(Map<String, dynamic> json) {
+    return _NewItemDraft(
+      name: json['name'] as String? ?? '',
+      category: json['category'] as String? ?? 'Gold22kt',
+      makingType: json['makingType'] as String?,
+      makingChargeText: json['makingChargeText'] as String? ?? '',
+      grossWeightText: json['grossWeightText'] as String? ?? '',
+      lessWeightText: json['lessWeightText'] as String? ?? '',
+      additionalChargeText: json['additionalChargeText'] as String? ?? '',
+      gstEnabled: json['gstEnabled'] as bool? ?? true,
+      notes: json['notes'] as String? ?? '',
+    );
+  }
+
+  final TextEditingController nameController;
+  final TextEditingController categoryController;
+  final TextEditingController makingTypeController;
+  final TextEditingController makingChargeController;
+  final TextEditingController grossWeightController;
+  final TextEditingController lessWeightController;
+  final TextEditingController additionalChargeController;
+  final TextEditingController notesController;
+  bool gstEnabled;
+  bool showNameError = false;
+  bool showWeightError = false;
+
+  String get category {
+    final value = categoryController.text.trim();
+    return value.isEmpty ? 'Gold22kt' : value;
+  }
+
+  String get makingType {
+    final value = makingTypeController.text.trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+    return category == 'Silver' ? 'PerGram' : 'FixRate';
+  }
+
+  double get makingCharge {
+    return double.tryParse(makingChargeController.text.trim()) ?? 0;
+  }
+
+  double get grossWeight {
+    return double.tryParse(grossWeightController.text.trim()) ?? 0;
+  }
+
+  double get lessWeight {
+    return double.tryParse(lessWeightController.text.trim()) ?? 0;
+  }
+
+  double get netWeight {
+    final value = grossWeight - lessWeight;
+    return value > 0 ? value : 0;
+  }
+
+  double get additionalCharge {
+    return double.tryParse(additionalChargeController.text.trim()) ?? 0;
+  }
+
+  bool get isEmpty =>
+      nameController.text.trim().isEmpty &&
+      makingCharge == 0 &&
+      grossWeight == 0 &&
+      lessWeight == 0 &&
+      additionalCharge == 0 &&
+      notesController.text.trim().isEmpty;
+
+  String? get nameError {
+    if (!showNameError) {
+      return null;
+    }
+    return nameController.text.trim().isEmpty ? 'Enter item name' : null;
+  }
+
+  String? get weightError {
+    if (!showWeightError) {
+      return null;
+    }
+    if (grossWeight <= 0) {
+      return 'Enter gross weight';
+    }
+    if (netWeight <= 0) {
+      return 'Nett weight must be positive';
+    }
+    return null;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': nameController.text,
+      'category': categoryController.text,
+      'makingType': makingTypeController.text,
+      'makingChargeText': makingChargeController.text,
+      'grossWeightText': grossWeightController.text,
+      'lessWeightText': lessWeightController.text,
+      'additionalChargeText': additionalChargeController.text,
+      'gstEnabled': gstEnabled,
+      'notes': notesController.text,
+    };
+  }
+
+  void dispose() {
+    nameController.dispose();
+    categoryController.dispose();
+    makingTypeController.dispose();
+    makingChargeController.dispose();
+    grossWeightController.dispose();
+    lessWeightController.dispose();
+    additionalChargeController.dispose();
+    notesController.dispose();
+  }
+}
+
+class _NewItemEditor extends StatelessWidget {
+  const _NewItemEditor({
+    required this.index,
+    required this.item,
+    required this.amount,
+    required this.baseAmount,
+    required this.gstAmount,
+    required this.makingTypeOptions,
+    required this.onChanged,
+    required this.onCategoryChanged,
+    required this.onMakingTypeChanged,
+    this.onRemove,
+  });
+
+  final int index;
+  final _NewItemDraft item;
+  final double amount;
+  final double baseAmount;
+  final double gstAmount;
+  final List<String> makingTypeOptions;
+  final VoidCallback onChanged;
+  final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<String> onMakingTypeChanged;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final decimalInput = [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))];
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'New Item $index',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (onRemove != null)
+                  IconButton(
+                    onPressed: onRemove,
+                    icon: const Icon(Icons.delete_outline),
+                    tooltip: 'Remove item',
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Focus(
+                    onFocusChange: (hasFocus) {
+                      if (!hasFocus) {
+                        item.showNameError = true;
+                        onChanged();
+                      }
+                    },
+                    child: TextField(
+                      controller: item.nameController,
+                      inputFormatters: [_WordCapitalizeFormatter()],
+                      decoration: InputDecoration(
+                        labelText: 'Item Name',
+                        errorText: item.nameError,
+                      ),
+                      onChanged: (_) => onChanged(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue:
+                        _OrdersDashboardState._newItemCategoryOptions.contains(
+                          item.category,
+                        )
+                        ? item.category
+                        : _OrdersDashboardState._newItemCategoryOptions.first,
+                    decoration: const InputDecoration(labelText: 'Category'),
+                    items: _OrdersDashboardState._newItemCategoryOptions
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      onCategoryChanged(value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: makingTypeOptions.contains(item.makingType)
+                        ? item.makingType
+                        : makingTypeOptions.first,
+                    decoration: const InputDecoration(labelText: 'Making Type'),
+                    items: makingTypeOptions
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      onMakingTypeChanged(value);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: item.makingChargeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: decimalInput,
+                    decoration: InputDecoration(
+                      labelText: item.makingType == 'Percentage'
+                          ? 'Making %'
+                          : 'Making Charge',
+                      suffixText: item.makingType == 'Percentage' ? '%' : null,
+                    ),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Focus(
+                    onFocusChange: (hasFocus) {
+                      if (!hasFocus) {
+                        item.showWeightError = true;
+                        onChanged();
+                      }
+                    },
+                    child: TextField(
+                      controller: item.grossWeightController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      inputFormatters: decimalInput,
+                      decoration: InputDecoration(
+                        labelText: 'Gross Weight',
+                        suffixText: 'g',
+                        errorText: item.weightError,
+                      ),
+                      onChanged: (_) => onChanged(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: item.lessWeightController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: decimalInput,
+                    decoration: const InputDecoration(
+                      labelText: 'Less Weight',
+                      suffixText: 'g',
+                    ),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Nett Weight',
+                      suffixText: 'g',
+                    ),
+                    child: Text(
+                      _formatWeightFixed3(item.netWeight),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: item.additionalChargeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: decimalInput,
+                    decoration: const InputDecoration(
+                      labelText: 'Additional Charge',
+                    ),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'GST',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                      Switch(
+                        value: item.gstEnabled,
+                        onChanged: (value) {
+                          item.gstEnabled = value;
+                          onChanged();
+                        },
+                      ),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Base Amount',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      Text(
+                        _formatCurrency(baseAmount),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'GST Amount',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                      Text(
+                        _formatCurrency(gstAmount),
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Line Total',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Text(
+                        _formatCurrency(amount),
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 12),
