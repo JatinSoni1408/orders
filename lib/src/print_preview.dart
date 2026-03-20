@@ -1918,7 +1918,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
       document.addPage(
         pw.Page(
           pageFormat: pageFormat,
-          margin: const pw.EdgeInsets.all(16),
+          margin: const pw.EdgeInsets.fromLTRB(16, 16, 16, 16),
           build: (context) {
             final tableStyle = pw.TextStyle(
               fontSize: compactTableFontSize,
@@ -1926,6 +1926,11 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
             );
             final tableHeaderStyle = pw.TextStyle(
               fontSize: compactTableFontSize,
+              fontWeight: pw.FontWeight.bold,
+              color: PdfColors.black,
+            );
+            final dateStyle = pw.TextStyle(
+              fontSize: compactValueFontSize + 2,
               fontWeight: pw.FontWeight.bold,
               color: PdfColors.black,
             );
@@ -1978,21 +1983,30 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: pw.CrossAxisAlignment.center,
                   children: [
-                    pw.Container(
-                      width: 12,
-                      height: 12,
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: PdfColors.black, width: 1),
-                      ),
+                    pw.Row(
+                      mainAxisSize: pw.MainAxisSize.min,
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Container(
+                          width: 12,
+                          height: 12,
+                          decoration: pw.BoxDecoration(
+                            border: pw.Border.all(
+                              color: PdfColors.black,
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        pw.SizedBox(width: 8),
+                        pw.Text('Estimate', style: headingStyle),
+                      ],
                     ),
                     pw.Text(
                       DateFormat('dd/MM/yyyy').format(DateTime.now()),
-                      style: labelStyle,
+                      style: dateStyle,
                     ),
                   ],
                 ),
-                pw.SizedBox(height: 4),
-                pw.Center(child: pw.Text('Estimate', style: headingStyle)),
                 pw.SizedBox(height: 8),
                 pw.Row(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
