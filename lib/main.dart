@@ -15,6 +15,7 @@ part 'src/order_widgets.dart';
 part 'src/order_form_sheet.dart';
 part 'src/print_preview.dart';
 part 'src/formatting.dart';
+part 'src/bhav_page.dart';
 
 void main() {
   runApp(const OrderApp());

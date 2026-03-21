@@ -1431,7 +1431,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       _formatWeight3(
                         newItemList.fold<double>(
                           0,
-                          (sum, item) => sum + item.netWeight,
+                          (total, item) => total + item.netWeight,
                         ),
                       ),
                       style: tableHeaderStyle,
@@ -1775,8 +1775,19 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
   Future<Uint8List> _buildEstimatePdf(PdfPageFormat format) async {
     try {
       final document = pw.Document();
+      pw.MemoryImage? shreeHeaderImage;
       pw.MemoryImage? personIconImage;
       pw.MemoryImage? phoneIconImage;
+      try {
+        final shreeHeaderBytes = await _buildShreeHeaderImage().timeout(
+          const Duration(seconds: 2),
+        );
+        if (shreeHeaderBytes.isNotEmpty) {
+          shreeHeaderImage = pw.MemoryImage(shreeHeaderBytes);
+        }
+      } catch (_) {
+        shreeHeaderImage = null;
+      }
       try {
         final personIconBytes = await _buildPersonIconImage().timeout(
           const Duration(seconds: 2),
@@ -2022,42 +2033,44 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
                 pw.Center(
-                  child: pw.Row(
-                    mainAxisSize: pw.MainAxisSize.min,
-                    children: [
-                      pw.Container(
-                        width: 2,
-                        height: 36,
-                        color: PdfColors.black,
-                      ),
-                      pw.SizedBox(width: 6),
-                      pw.Container(
-                        width: 2,
-                        height: 36,
-                        color: PdfColors.black,
-                      ),
-                      pw.SizedBox(width: 12),
-                      pw.Text(
-                        '\u0936\u094d\u0930\u0940 :',
-                        style: pw.TextStyle(
-                          fontSize: 14,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.SizedBox(width: 12),
-                      pw.Container(
-                        width: 2,
-                        height: 36,
-                        color: PdfColors.black,
-                      ),
-                      pw.SizedBox(width: 6),
-                      pw.Container(
-                        width: 2,
-                        height: 36,
-                        color: PdfColors.black,
-                      ),
-                    ],
-                  ),
+                  child: shreeHeaderImage == null
+                      ? pw.Row(
+                          mainAxisSize: pw.MainAxisSize.min,
+                          children: [
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 6),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 12),
+                            pw.Text(
+                              'Shree :',
+                              style: pw.TextStyle(
+                                fontSize: 14,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                            pw.SizedBox(width: 12),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                            pw.SizedBox(width: 6),
+                            pw.Container(
+                              width: 2,
+                              height: 36,
+                              color: PdfColors.black,
+                            ),
+                          ],
+                        )
+                      : pw.Image(shreeHeaderImage, width: 116),
                 ),
                 pw.SizedBox(height: 6),
                 pw.Stack(
@@ -2282,7 +2295,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                           _formatWeight3(
                             items.fold<double>(
                               0,
-                              (sum, item) => sum + item.estimatedWeight,
+                              (total, item) => total + item.estimatedWeight,
                             ),
                           ),
                           style: tableHeaderStyle,
@@ -2347,6 +2360,71 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
 
       return document.save();
     }
+  }
+
+  Future<Uint8List> _buildShreeHeaderImage() async {
+    const width = 420.0;
+    const height = 64.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final linePaint = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 2;
+
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: '\u0936\u094d\u0930\u0940:',
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: 28,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+
+    final textLeft = (width - textPainter.width) / 2;
+    final textRight = textLeft + textPainter.width;
+    const lineTop = 12.0;
+    const lineBottom = 52.0;
+    const innerGap = 12.0;
+    const lineSpacing = 8.0;
+
+    canvas.drawLine(
+      Offset(textLeft - innerGap - lineSpacing, lineTop),
+      Offset(textLeft - innerGap - lineSpacing, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textLeft - innerGap, lineTop),
+      Offset(textLeft - innerGap, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textRight + innerGap, lineTop),
+      Offset(textRight + innerGap, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textRight + innerGap + lineSpacing, lineTop),
+      Offset(textRight + innerGap + lineSpacing, lineBottom),
+      linePaint,
+    );
+
+    textPainter.paint(
+      canvas,
+      Offset(textLeft, (height - textPainter.height) / 2),
+    );
+
+    final image = await recorder.endRecording().toImage(
+      width.toInt(),
+      height.toInt(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return Uint8List(0);
+    }
+    return byteData.buffer.asUint8List();
   }
 
   Future<Uint8List> _buildPersonIconImage() async {
@@ -2482,8 +2560,22 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
       return item.amount / effectiveRate;
     }
 
+    String formatAdvanceAmount(double value) {
+      return NumberFormat.currency(
+        locale: 'en_IN',
+        symbol: '',
+        decimalDigits: 2,
+      ).format(value);
+    }
+
     String formatAdvanceRate(double value) {
-      return value <= 0 ? '-Unfix-' : _formatCurrency(value);
+      return value <= 0
+          ? '-Unfix-'
+          : NumberFormat.currency(
+              locale: 'en_IN',
+              symbol: '',
+              decimalDigits: 1,
+            ).format(value);
     }
 
     String formatAdvanceWeight3(double value) {
@@ -2500,15 +2592,15 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
       ..sort((a, b) => a.date.compareTo(b.date));
     final advanceLinesTotalNetWeight = lines.fold<double>(
       0,
-      (sum, line) => sum + line.weight,
+      (total, line) => total + line.weight,
     );
     final oldItemsTotalAmount = oldItemLines.fold<double>(
       0,
-      (sum, item) => sum + item.amount,
+      (total, item) => total + item.amount,
     );
     final oldItemsAdvanceTotalNetWeight = oldItemLines.fold<double>(
       0,
-      (sum, item) => sum + oldItemAdvanceWeight(item),
+      (total, item) => total + oldItemAdvanceWeight(item),
     );
     final combinedAdvanceTotalAmount = totalAmount + oldItemsTotalAmount;
     final combinedAdvanceTotalNetWeight =
@@ -2528,7 +2620,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
               (line) => (
                 date: line.date,
                 mode: _modeLabelWithCheque(line),
-                amount: _formatCurrency(line.amount),
+                amount: formatAdvanceAmount(line.amount),
                 rate: formatAdvanceRate(line.rate),
                 making: '${line.rateMaking.toStringAsFixed(2)}%',
                 netWeight: formatAdvanceWeight3(line.weight),
@@ -2538,7 +2630,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
               (item) => (
                 date: item.date,
                 mode: 'OLD - ${item.itemNameController.text.trim()}',
-                amount: _formatCurrency(item.amount),
+                amount: formatAdvanceAmount(item.amount),
                 rate: formatAdvanceRate(item.advanceRate),
                 making: item.advanceMaking > 0
                     ? '${item.advanceMaking.toStringAsFixed(2)}%'
@@ -2677,7 +2769,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                       tableCell(''),
                       tableCell('Total', isHeader: true),
                       tableCell(
-                        _formatCurrency(combinedAdvanceTotalAmount),
+                        formatAdvanceAmount(combinedAdvanceTotalAmount),
                         isHeader: true,
                         alignment: pw.Alignment.centerRight,
                       ),
@@ -2784,13 +2876,13 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                             scaleDown: true,
                           ),
                           tableCell(
-                            _formatCurrency(item.returnRate),
+                            formatAdvanceRate(item.returnRate),
                             alignment: pw.Alignment.centerRight,
                             scaleDown: true,
                             maxLines: 1,
                           ),
                           tableCell(
-                            _formatCurrency(item.amount),
+                            formatAdvanceAmount(item.amount),
                             alignment: pw.Alignment.centerRight,
                             scaleDown: true,
                           ),
@@ -2807,7 +2899,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                         tableCell(''),
                         tableCell(''),
                         tableCell(
-                          _formatCurrency(oldItemsTotalAmount),
+                          formatAdvanceAmount(oldItemsTotalAmount),
                           isHeader: true,
                           alignment: pw.Alignment.centerRight,
                           scaleDown: true,
@@ -2901,6 +2993,39 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
   Future<Uint8List> _buildActualPdf(PdfPageFormat format) async {
     final document = pw.Document();
     final actualItems = items.where((item) => !item.isEmpty).toList();
+    pw.MemoryImage? shreeHeaderImage;
+    pw.MemoryImage? personIconImage;
+    pw.MemoryImage? phoneIconImage;
+    try {
+      final shreeHeaderBytes = await _buildShreeHeaderImage().timeout(
+        const Duration(seconds: 2),
+      );
+      if (shreeHeaderBytes.isNotEmpty) {
+        shreeHeaderImage = pw.MemoryImage(shreeHeaderBytes);
+      }
+    } catch (_) {
+      shreeHeaderImage = null;
+    }
+    try {
+      final personIconBytes = await _buildPersonIconImage().timeout(
+        const Duration(seconds: 2),
+      );
+      if (personIconBytes.isNotEmpty) {
+        personIconImage = pw.MemoryImage(personIconBytes);
+      }
+    } catch (_) {
+      personIconImage = null;
+    }
+    try {
+      final phoneIconBytes = await _buildPhoneIconImage().timeout(
+        const Duration(seconds: 2),
+      );
+      if (phoneIconBytes.isNotEmpty) {
+        phoneIconImage = pw.MemoryImage(phoneIconBytes);
+      }
+    } catch (_) {
+      phoneIconImage = null;
+    }
 
     final longestItemNameLength = actualItems.fold<int>(0, (maxLength, item) {
       final currentLength = item.nameController.text.trim().length;
@@ -2912,6 +3037,7 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
     } else if (itemNameColumnWidth > 118) {
       itemNameColumnWidth = 118;
     }
+    itemNameColumnWidth += 28;
     final itemCount = actualItems.length;
 
     document.addPage(
@@ -3034,26 +3160,44 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               pw.Center(
-                child: pw.Row(
-                  mainAxisSize: pw.MainAxisSize.min,
-                  children: [
-                    pw.Container(width: 2, height: 36, color: PdfColors.black),
-                    pw.SizedBox(width: 6),
-                    pw.Container(width: 2, height: 36, color: PdfColors.black),
-                    pw.SizedBox(width: 12),
-                    pw.Text(
-                      'श्री :',
-                      style: pw.TextStyle(
-                        fontSize: 14,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
-                    ),
-                    pw.SizedBox(width: 12),
-                    pw.Container(width: 2, height: 36, color: PdfColors.black),
-                    pw.SizedBox(width: 6),
-                    pw.Container(width: 2, height: 36, color: PdfColors.black),
-                  ],
-                ),
+                child: shreeHeaderImage == null
+                    ? pw.Row(
+                        mainAxisSize: pw.MainAxisSize.min,
+                        children: [
+                          pw.Container(
+                            width: 2,
+                            height: 36,
+                            color: PdfColors.black,
+                          ),
+                          pw.SizedBox(width: 6),
+                          pw.Container(
+                            width: 2,
+                            height: 36,
+                            color: PdfColors.black,
+                          ),
+                          pw.SizedBox(width: 12),
+                          pw.Text(
+                            'Shree :',
+                            style: pw.TextStyle(
+                              fontSize: 14,
+                              fontWeight: pw.FontWeight.bold,
+                            ),
+                          ),
+                          pw.SizedBox(width: 12),
+                          pw.Container(
+                            width: 2,
+                            height: 36,
+                            color: PdfColors.black,
+                          ),
+                          pw.SizedBox(width: 6),
+                          pw.Container(
+                            width: 2,
+                            height: 36,
+                            color: PdfColors.black,
+                          ),
+                        ],
+                      )
+                    : pw.Image(shreeHeaderImage, width: 116),
               ),
               pw.SizedBox(height: 6),
               pw.Stack(
@@ -3094,8 +3238,15 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                           flex: 3,
                           child: pw.Row(
                             children: [
-                              pw.Text('Name:', style: labelStyle),
-                              pw.SizedBox(width: 5),
+                              if (personIconImage != null)
+                                pw.Container(
+                                  width: 11,
+                                  height: 11,
+                                  margin: const pw.EdgeInsets.only(right: 5),
+                                  child: pw.Image(personIconImage),
+                                )
+                              else
+                                pw.Text('Name:', style: labelStyle),
                               pw.Expanded(
                                 child: pw.Text(
                                   customerName,
@@ -3115,8 +3266,15 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                             child: pw.Row(
                               mainAxisSize: pw.MainAxisSize.min,
                               children: [
-                                pw.Text('Call:', style: labelStyle),
-                                pw.SizedBox(width: 4),
+                                if (phoneIconImage != null)
+                                  pw.Container(
+                                    width: 11,
+                                    height: 11,
+                                    margin: const pw.EdgeInsets.only(right: 4),
+                                    child: pw.Image(phoneIconImage),
+                                  )
+                                else
+                                  pw.Text('Call:', style: labelStyle),
                                 pw.Text(
                                   customerMobile,
                                   style: headerValueStyle,
@@ -3150,14 +3308,13 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
               pw.Table(
                 border: pw.TableBorder.all(color: PdfColors.grey400),
                 columnWidths: {
-                  0: const pw.FixedColumnWidth(20),
+                  0: const pw.FixedColumnWidth(26),
                   1: const pw.FixedColumnWidth(34),
                   2: pw.FixedColumnWidth(itemNameColumnWidth),
                   3: const pw.FixedColumnWidth(20),
                   4: const pw.FixedColumnWidth(38),
                   5: const pw.FixedColumnWidth(34),
                   6: const pw.FixedColumnWidth(38),
-                  7: const pw.FlexColumnWidth(1.2),
                 },
                 defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
                 children: [
@@ -3167,56 +3324,50 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                     ),
                     children: [
                       tableCell(
-                        'Serial No.',
+                        'S No',
                         style: tableHeaderStyle,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
                         'Purity',
                         style: tableHeaderStyle,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
                         'Item Name',
                         style: tableHeaderStyle,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
-                        'Quantity',
+                        'Qty',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.center,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
-                        'Gross Weight',
+                        'Gross',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
-                        'Less Weight',
+                        'Less',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                       tableCell(
-                        'Nett Weight',
+                        'Nett',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
                         backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
-                      ),
-                      tableCell(
-                        'Notes',
-                        style: tableHeaderStyle,
-                        backgroundColor: PdfColors.grey200,
-                        maxLines: 2,
+                        maxLines: 1,
                       ),
                     ],
                   ),
@@ -3229,7 +3380,15 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                           style: tableStyle,
                         ),
                         tableCell(
-                          entry.value.nameController.text.trim(),
+                          (() {
+                            final itemName =
+                                entry.value.nameController.text.trim();
+                            final notes = entry.value.notesController.text.trim();
+                            if (notes.isEmpty) {
+                              return itemName;
+                            }
+                            return '$itemName ($notes)';
+                          })(),
                           style: tableStyle,
                         ),
                         tableCell(
@@ -3251,10 +3410,6 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                           _formatWeightFixed3(entry.value.actualNetWeight),
                           style: tableStyle,
                           alignment: pw.Alignment.centerRight,
-                        ),
-                        tableCell(
-                          entry.value.notesController.text.trim(),
-                          style: tableStyle,
                         ),
                       ],
                     ),
@@ -3286,26 +3441,21 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                         backgroundColor: PdfColors.grey100,
                       ),
                       tableCell(
-                        totalGrossWeight,
+                        '$totalGrossWeight gm',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
                         backgroundColor: PdfColors.grey100,
                       ),
                       tableCell(
-                        totalLessWeight,
+                        '$totalLessWeight gm',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
                         backgroundColor: PdfColors.grey100,
                       ),
                       tableCell(
-                        totalNetWeight,
+                        '$totalNetWeight gm',
                         style: tableHeaderStyle,
                         alignment: pw.Alignment.centerRight,
-                        backgroundColor: PdfColors.grey100,
-                      ),
-                      tableCell(
-                        '',
-                        style: tableHeaderStyle,
                         backgroundColor: PdfColors.grey100,
                       ),
                     ],
@@ -3345,6 +3495,129 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
     );
 
     return document.save();
+  }
+
+  Future<Uint8List> _buildShreeHeaderImage() async {
+    const width = 420.0;
+    const height = 64.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final linePaint = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 2;
+
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: '\u0936\u094d\u0930\u0940:',
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: 28,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+
+    final textLeft = (width - textPainter.width) / 2;
+    final textRight = textLeft + textPainter.width;
+    const lineTop = 12.0;
+    const lineBottom = 52.0;
+    const innerGap = 12.0;
+    const lineSpacing = 8.0;
+
+    canvas.drawLine(
+      Offset(textLeft - innerGap - lineSpacing, lineTop),
+      Offset(textLeft - innerGap - lineSpacing, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textLeft - innerGap, lineTop),
+      Offset(textLeft - innerGap, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textRight + innerGap, lineTop),
+      Offset(textRight + innerGap, lineBottom),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(textRight + innerGap + lineSpacing, lineTop),
+      Offset(textRight + innerGap + lineSpacing, lineBottom),
+      linePaint,
+    );
+
+    textPainter.paint(
+      canvas,
+      Offset(textLeft, (height - textPainter.height) / 2),
+    );
+
+    final image = await recorder.endRecording().toImage(
+      width.toInt(),
+      height.toInt(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return Uint8List(0);
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<Uint8List> _buildPersonIconImage() async {
+    const iconSize = 18.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.person.codePoint),
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: iconSize,
+          fontFamily: Icons.person.fontFamily,
+          package: Icons.person.fontPackage,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(canvas, Offset.zero);
+    final image = await recorder.endRecording().toImage(
+      textPainter.width <= 0 ? 1 : textPainter.width.ceil(),
+      textPainter.height <= 0 ? 1 : textPainter.height.ceil(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return Uint8List(0);
+    }
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<Uint8List> _buildPhoneIconImage() async {
+    const iconSize = 18.0;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    final textPainter = TextPainter(
+      text: TextSpan(
+        text: String.fromCharCode(Icons.phone.codePoint),
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: iconSize,
+          fontFamily: Icons.phone.fontFamily,
+          package: Icons.phone.fontPackage,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+
+    textPainter.paint(canvas, Offset.zero);
+    final image = await recorder.endRecording().toImage(
+      textPainter.width <= 0 ? 1 : textPainter.width.ceil(),
+      textPainter.height <= 0 ? 1 : textPainter.height.ceil(),
+    );
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData == null) {
+      return Uint8List(0);
+    }
+    return byteData.buffer.asUint8List();
   }
 }
 
@@ -3438,7 +3711,7 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
 
     final textPainter = TextPainter(
       text: const TextSpan(
-        text: 'श्री:',
+        text: '\u0936\u094d\u0930\u0940:',
         style: TextStyle(
           color: Colors.black,
           fontSize: 28,

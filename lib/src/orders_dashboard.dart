@@ -23,6 +23,22 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     'Gold18kt',
     'Silver',
   ];
+  static const List<String> _estimateMakingOptions = [
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    '10',
+    '11',
+    '12',
+    '13',
+    '14',
+    '15',
+    '16',
+    '17',
+    '18',
+  ];
   static const List<String> _goldMakingTypeOptions = [
     'FixRate',
     'Percentage',
@@ -231,31 +247,31 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   int get _estimateTotalQuantity {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<int>(0, (sum, item) => sum + item.quantity);
+        .fold<int>(0, (total, item) => total + item.quantity);
   }
 
   double get _estimateTotalEstimatedWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (sum, item) => sum + item.estimatedWeight);
+        .fold<double>(0, (total, item) => total + item.estimatedWeight);
   }
 
   double get _actualTotalGrossWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (sum, item) => sum + item.grossWeight);
+        .fold<double>(0, (total, item) => total + item.grossWeight);
   }
 
   double get _actualTotalLessWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (sum, item) => sum + item.lessWeight);
+        .fold<double>(0, (total, item) => total + item.lessWeight);
   }
 
   double get _actualTotalNetWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (sum, item) => sum + item.actualNetWeight);
+        .fold<double>(0, (total, item) => total + item.actualNetWeight);
   }
 
   String get _estimateAutoWeightRangeLabel {
@@ -291,14 +307,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double get _advanceTotalAmount {
     return _populatedAdvanceItems.fold<double>(
       0,
-      (sum, item) => sum + item.amount,
+      (total, item) => total + item.amount,
     );
   }
 
   double get _advanceTotalNetWeight {
     return _populatedAdvanceItems.fold<double>(
       0,
-      (sum, item) => sum + item.weight,
+      (total, item) => total + item.weight,
     );
   }
 
@@ -309,7 +325,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double get _advanceOldItemsTotalAmount {
     return _populatedAdvanceOldItems.fold<double>(
       0,
-      (sum, item) => sum + item.amount,
+      (total, item) => total + item.amount,
     );
   }
 
@@ -426,21 +442,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double get _newItemsSubtotal {
     return _populatedNewItems.fold<double>(
       0,
-      (sum, item) => sum + _newItemBaseAmount(item) + item.additionalCharge,
+      (total, item) => total + _newItemBaseAmount(item) + item.additionalCharge,
     );
   }
 
   double get _newItemsTotalGst {
     return _populatedNewItems.fold<double>(
       0,
-      (sum, item) => sum + _newItemGstAmount(item),
+      (total, item) => total + _newItemGstAmount(item),
     );
   }
 
   double get _newItemsGrandTotal {
     return _populatedNewItems.fold<double>(
       0,
-      (sum, item) => sum + _newItemTotalAmount(item),
+      (total, item) => total + _newItemTotalAmount(item),
     );
   }
 
@@ -1237,7 +1253,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   void _openPrintPreview() {
     final totalRevenue = _orders.fold<double>(
       0,
-      (sum, order) => sum + order.total,
+      (total, order) => total + order.total,
     );
 
     showModalBottomSheet<void>(
@@ -1332,6 +1348,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             totalGst: _newItemsTotalGst,
             grandTotal: _newItemsGrandTotal,
             items: _populatedNewItems,
+          );
+        },
+      ),
+    );
+  }
+
+  void _openBhavScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) {
+          return _BhavPage(
+            gold22Rate: _newItemRateForCategory('Gold22kt'),
+            gold18Rate: _newItemRateForCategory('Gold18kt'),
+            silverRate: _newItemRateForCategory('Silver'),
+            openedAt: DateTime.now(),
           );
         },
       ),
@@ -1651,32 +1682,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                             onChanged: (_) => setState(() {}),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<OrderStatus>(
-                            initialValue: _estimateStatus,
-                            decoration: const InputDecoration(
-                              labelText: 'Status',
-                            ),
-                            items: OrderStatus.values
-                                .map(
-                                  (status) => DropdownMenuItem(
-                                    value: status,
-                                    child: Text(status.label),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _estimateStatus = value;
-                              });
-                              _schedulePersistence();
-                            },
-                          ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1696,25 +1701,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                             decoration: InputDecoration(
                               labelText: 'Whatsapp Number',
                               errorText: _estimateMobileError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateAlternateMobileFocusNode,
-                            controller: _estimateAlternateMobileController,
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9]'),
-                              ),
-                              LengthLimitingTextInputFormatter(10),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: 'Alternate Mobile',
-                              errorText: _estimateAlternateMobileError,
                             ),
                             onChanged: (_) => setState(() {}),
                           ),
@@ -1740,17 +1726,33 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: _estimateMakingController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _estimateMakingOptions.contains(
+                          _estimateMakingController.text.trim(),
+                        )
+                        ? _estimateMakingController.text.trim()
+                        : '15',
                     decoration: const InputDecoration(
                       labelText: 'Making',
                       suffixText: '%',
                       isDense: true,
                     ),
-                    onChanged: (_) => setState(() {}),
+                    items: _estimateMakingOptions
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      _estimateMakingController.text = value;
+                      setState(() {});
+                      _schedulePersistence();
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1918,32 +1920,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                             onChanged: (_) => setState(() {}),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: DropdownButtonFormField<OrderStatus>(
-                            initialValue: _estimateStatus,
-                            decoration: const InputDecoration(
-                              labelText: 'Status',
-                            ),
-                            items: OrderStatus.values
-                                .map(
-                                  (status) => DropdownMenuItem(
-                                    value: status,
-                                    child: Text(status.label),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (value) {
-                              if (value == null) {
-                                return;
-                              }
-                              setState(() {
-                                _estimateStatus = value;
-                              });
-                              _schedulePersistence();
-                            },
-                          ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -1963,25 +1939,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                             decoration: InputDecoration(
                               labelText: 'Whatsapp Number',
                               errorText: _estimateMobileError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateAlternateMobileFocusNode,
-                            controller: _estimateAlternateMobileController,
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9]'),
-                              ),
-                              LengthLimitingTextInputFormatter(10),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: 'Alternate Mobile',
-                              errorText: _estimateAlternateMobileError,
                             ),
                             onChanged: (_) => setState(() {}),
                           ),
@@ -2007,17 +1964,33 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: TextField(
-                    controller: _estimateMakingController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _estimateMakingOptions.contains(
+                          _estimateMakingController.text.trim(),
+                        )
+                        ? _estimateMakingController.text.trim()
+                        : '15',
                     decoration: const InputDecoration(
                       labelText: 'Making',
                       suffixText: '%',
                       isDense: true,
                     ),
-                    onChanged: (_) => setState(() {}),
+                    items: _estimateMakingOptions
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(option),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      _estimateMakingController.text = value;
+                      setState(() {});
+                      _schedulePersistence();
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -2868,6 +2841,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
                 icon: const Icon(Icons.save_outlined),
                 tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+              ),
+            if (_selectedSection == AppSection.items)
+              IconButton(
+                onPressed: _openBhavScreen,
+                icon: const Icon(Icons.settings_outlined),
+                tooltip: 'Bhav',
               ),
             if (_selectedSection == AppSection.items)
               IconButton(
@@ -4176,15 +4155,12 @@ class _AdvanceValuationEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
-                    controller: item.rateController,
+                    controller: item.amountController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(
-                      labelText: 'Rate22',
-                      hintText: '-Unfix-',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Amount'),
                     onChanged: (_) => onChanged(),
                   ),
                 ),
@@ -4212,12 +4188,15 @@ class _AdvanceValuationEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
-                    controller: item.amountController,
+                    controller: item.rateController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(labelText: 'Amount'),
+                    decoration: const InputDecoration(
+                      labelText: 'Rate22',
+                      hintText: '-Unfix-',
+                    ),
                     onChanged: (_) => onChanged(),
                   ),
                 ),
