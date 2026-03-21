@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -16,6 +17,7 @@ part 'src/order_form_sheet.dart';
 part 'src/print_preview.dart';
 part 'src/formatting.dart';
 part 'src/bhav_page.dart';
+part 'src/rates_service.dart';
 
 void main() {
   runApp(const OrderApp());

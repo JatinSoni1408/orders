@@ -2,16 +2,22 @@ part of '../main.dart';
 
 class _BhavPage extends StatefulWidget {
   const _BhavPage({
+    required this.gold24Rate,
     required this.gold22Rate,
     required this.gold18Rate,
     required this.silverRate,
-    required this.openedAt,
+    required this.syncedAt,
+    this.updatedAt,
+    this.updatedByEmail,
   });
 
+  final double gold24Rate;
   final double gold22Rate;
   final double gold18Rate;
   final double silverRate;
-  final DateTime openedAt;
+  final DateTime syncedAt;
+  final DateTime? updatedAt;
+  final String? updatedByEmail;
 
   @override
   State<_BhavPage> createState() => _BhavPageState();
@@ -82,7 +88,9 @@ class _BhavPageState extends State<_BhavPage>
   }
 
   double get _gold24Approx =>
-      widget.gold22Rate <= 0 ? 0 : (widget.gold22Rate * 24) / 22;
+      widget.gold24Rate > 0
+          ? widget.gold24Rate
+          : (widget.gold22Rate <= 0 ? 0 : (widget.gold22Rate * 24) / 22);
 
   double get _return22Rate =>
       widget.gold22Rate <= 0 ? 0 : widget.gold22Rate - 300;
@@ -227,8 +235,19 @@ class _BhavPageState extends State<_BhavPage>
                                     ),
                                   ),
                                   const SizedBox(height: 4),
+                                  if (widget.updatedAt != null)
+                                    Text(
+                                      'Firestore updated: ${_formatClock(widget.updatedAt!)}',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.green.shade700,
+                                      ),
+                                    ),
+                                  const SizedBox(height: 4),
                                   Text(
-                                    'Rates from New Items: ${_formatClock(widget.openedAt)}',
+                                    'App synced: ${_formatClock(widget.syncedAt)}',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontSize: 12,
@@ -236,13 +255,27 @@ class _BhavPageState extends State<_BhavPage>
                                       color: Colors.green.shade700,
                                     ),
                                   ),
+                                  if (widget.updatedByEmail != null) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Updated by ${widget.updatedByEmail}',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        color: colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
                             const SizedBox(height: 12),
                             _rateRow(
                               context: context,
-                              label: 'Gold24kt Rate (Approx)',
+                              label: widget.gold24Rate > 0
+                                  ? 'Gold24kt Rate'
+                                  : 'Gold24kt Rate (Approx)',
                               value: _formatRate(_gold24Approx, decimals: 0),
                             ),
                             const Divider(height: 1),
@@ -284,7 +317,7 @@ class _BhavPageState extends State<_BhavPage>
                             ),
                             const SizedBox(height: 18),
                             Text(
-                              'Rates shown here come directly from the New Items page.',
+                              'Rates shown here come directly from Firestore and the New Items page uses the same values.',
                               textAlign: TextAlign.center,
                               style: Theme.of(context).textTheme.bodyMedium
                                   ?.copyWith(

@@ -50,6 +50,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     'FixRate',
   ];
   final List<Order> _orders = [];
+  final _RatesRepository _ratesRepository = const _RatesRepository();
 
   OrderStatus? _selectedStatus;
   OrderSortOption _selectedOrderSort = OrderSortOption.newest;
@@ -91,10 +92,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   bool _showEstimateMobileError = false;
   bool _showEstimateAlternateMobileError = false;
   bool _isRestoringLocalState = false;
+  bool _isRatesLoading = false;
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
+  double _ratesGold24Rate = 0;
+  DateTime? _ratesSyncedAt;
+  DateTime? _ratesUpdatedAt;
   String? _editingOrderId;
+  String? _ratesUpdatedByEmail;
   DateTime? _editingOrderCreatedAt;
   String _searchQuery = '';
 
@@ -145,7 +151,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         });
       }
     });
-    _restoreLocalState();
+    _restoreLocalState().whenComplete(() {
+      _loadRatesFromFirestore();
+    });
   }
 
   @override
@@ -389,6 +397,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double _parseNewItemText(String value) {
     final cleaned = value.replaceAll(',', '').replaceAll('%', '').trim();
     return double.tryParse(cleaned) ?? 0;
+  }
+
+  String _formatRateControllerText(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+    return value.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
   }
 
   double _newItemRateForCategory(String category) {
@@ -664,6 +679,65 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         'items': _estimateItems.map((item) => item.toJson()).toList(),
       }),
     );
+  }
+
+  Future<void> _loadRatesFromFirestore({bool showFeedback = false}) async {
+    if (_isRatesLoading) {
+      return;
+    }
+
+    setState(() {
+      _isRatesLoading = true;
+    });
+
+    try {
+      final rates = await _ratesRepository.fetchRates();
+      if (!mounted) {
+        return;
+      }
+
+      _newItemsGold22RateController.text = _formatRateControllerText(
+        rates.gold22Rate,
+      );
+      _newItemsGold18RateController.text = _formatRateControllerText(
+        rates.gold18Rate,
+      );
+      _newItemsSilverRateController.text = _formatRateControllerText(
+        rates.silverRate,
+      );
+
+      setState(() {
+        _ratesGold24Rate = rates.gold24Rate;
+        _ratesSyncedAt = DateTime.now();
+        _ratesUpdatedAt = rates.updatedAt;
+        _ratesUpdatedByEmail = rates.updatedByEmail;
+      });
+      _schedulePersistence();
+
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Rates refreshed from Firestore.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      if (showFeedback) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not refresh rates from Firestore.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRatesLoading = false;
+        });
+      }
+    }
   }
 
   Future<void> _restoreLocalState() async {
@@ -1362,7 +1436,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             gold22Rate: _newItemRateForCategory('Gold22kt'),
             gold18Rate: _newItemRateForCategory('Gold18kt'),
             silverRate: _newItemRateForCategory('Silver'),
-            openedAt: DateTime.now(),
+            gold24Rate: _ratesGold24Rate,
+            syncedAt: _ratesSyncedAt ?? DateTime.now(),
+            updatedAt: _ratesUpdatedAt,
+            updatedByEmail: _ratesUpdatedByEmail,
           );
         },
       ),
@@ -2387,9 +2464,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Widget _buildItemsBody(double contentTopPadding) {
-    final rateInputFormatters = [
-      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-    ];
     final populatedNewItems = _populatedNewItems;
 
     return SafeArea(
@@ -2398,94 +2472,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'New Items',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Add manually priced items here. Shared rates stay available, and each item can also carry its own manual Bhav.',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _newItemsGold22RateController,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            inputFormatters: rateInputFormatters,
-                            decoration: const InputDecoration(
-                              labelText: '22K Rate',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _newItemsGold18RateController,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            inputFormatters: rateInputFormatters,
-                            decoration: const InputDecoration(
-                              labelText: '18K Rate',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _newItemsSilverRateController,
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            inputFormatters: rateInputFormatters,
-                            decoration: const InputDecoration(
-                              labelText: 'Silver Rate',
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withAlpha(10),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.primary.withAlpha(28),
-                        ),
-                      ),
-                      child: Text(
-                        'GST is using the same rate as Estimate: ${_estimateGst.toStringAsFixed(2)}%',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
             Text(
               'Priced Items',
               style: Theme.of(
