@@ -13,7 +13,7 @@ enum AppSection {
 
 enum OrderSortOption { newest, oldest, deliverySoonest, deliveryLatest, nameAZ }
 
-enum AdvanceMode { cash, upi, banking }
+enum AdvanceMode { cash, upi, banking, imps, neft, rtgs }
 
 class Order {
   Order({
@@ -365,6 +365,8 @@ class OldItemReturn {
     required this.date,
     required this.itemName,
     required this.returnRate,
+    required this.advanceRate,
+    required this.advanceMaking,
     required this.grossWeight,
     required this.lessWeight,
     required this.tanch,
@@ -373,6 +375,8 @@ class OldItemReturn {
   final DateTime date;
   final String itemName;
   final double returnRate;
+  final double advanceRate;
+  final double advanceMaking;
   final double grossWeight;
   final double lessWeight;
   final double tanch;
@@ -389,6 +393,8 @@ class OldItemReturn {
       'date': date.toIso8601String(),
       'itemName': itemName,
       'returnRate': returnRate,
+      'advanceRate': advanceRate,
+      'advanceMaking': advanceMaking,
       'grossWeight': grossWeight,
       'lessWeight': lessWeight,
       'tanch': tanch,
@@ -401,6 +407,8 @@ class OldItemReturn {
       date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
       itemName: json['itemName'] as String? ?? '',
       returnRate: (json['returnRate'] as num?)?.toDouble() ?? 0,
+      advanceRate: (json['advanceRate'] as num?)?.toDouble() ?? 0,
+      advanceMaking: (json['advanceMaking'] as num?)?.toDouble() ?? 0,
       grossWeight: (json['grossWeight'] as num?)?.toDouble() ?? 0,
       lessWeight: (json['lessWeight'] as num?)?.toDouble() ?? 0,
       tanch: (json['tanch'] as num?)?.toDouble() ?? 0,
@@ -484,9 +492,15 @@ extension AdvanceModeX on AdvanceMode {
       case AdvanceMode.cash:
         return 'Cash';
       case AdvanceMode.upi:
-        return 'Upi';
+        return 'UPI';
       case AdvanceMode.banking:
-        return 'Banking';
+        return 'Cheque';
+      case AdvanceMode.imps:
+        return 'IMPS';
+      case AdvanceMode.neft:
+        return 'NEFT';
+      case AdvanceMode.rtgs:
+        return 'RTGS';
     }
   }
 }

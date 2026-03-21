@@ -11,6 +11,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     with WidgetsBindingObserver {
   static const _ordersStorageKey = 'orders_dashboard.orders';
   static const _estimateStorageKey = 'orders_dashboard.estimate';
+  static const _lockedEstimatePurity = '22K';
   static const _legacySampleOrderIds = {
     'JW-2046',
     'JW-2047',
@@ -201,8 +202,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   String get _estimatePurity {
-    final purity = _estimatePurityController.text.trim();
-    return purity.isEmpty ? '-' : purity;
+    return _lockedEstimatePurity;
   }
 
   String get _estimateCustomerName {
@@ -336,6 +336,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             date: item.date,
             itemName: item.itemNameController.text.trim(),
             returnRate: item.returnRate,
+            advanceRate: item.advanceRate,
+            advanceMaking: item.advanceMaking,
             grossWeight: item.grossWeight,
             lessWeight: item.lessWeight,
             tanch: item.tanch,
@@ -588,6 +590,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final controller in [
       item.itemNameController,
       item.returnRateController,
+      item.advanceRateController,
+      item.advanceMakingController,
       item.grossWeightController,
       item.lessWeightController,
       item.tanchController,
@@ -719,8 +723,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             orElse: () => OrderSortOption.newest,
           );
 
-          _estimatePurityController.text =
-              decodedEstimate['purity'] as String? ?? '22K';
+          _estimatePurityController.text = _lockedEstimatePurity;
           _estimateGstController.text =
               decodedEstimate['gst'] as String? ?? '3';
           _estimateMakingController.text =
@@ -836,7 +839,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _editingOrderCreatedAt = null;
     _estimateDate = DateTime.now();
     _estimateDeliveryDate = DateTime.now();
-    _estimatePurityController.text = '22K';
+    _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = '3';
     _estimateMakingController.text = '15';
     _estimateWeightRangeController.clear();
@@ -886,7 +889,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _editingOrderCreatedAt = order.createdAt;
     _estimateDate = DateTime.now();
     _estimateDeliveryDate = order.deliveryDate ?? DateTime.now();
-    _estimatePurityController.text = order.estimatePurity ?? '22K';
+    _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = (order.estimateGst ?? 3).toString();
     _estimateMakingController.text = (order.estimateMaking ?? 15).toString();
     _estimateWeightRangeController.text = order.estimateWeightRange ?? '';
@@ -910,7 +913,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   .map(
                     (item) => _EstimateItemDraft(
                       name: item.name,
-                      purity: item.purity ?? order.estimatePurity ?? '22K',
+                      purity: item.purity ?? _lockedEstimatePurity,
                       quantity: item.quantity,
                       estimatedNettWeight: item.estimatedWeight ?? item.weight,
                       grossWeight: item.grossWeight,
@@ -965,6 +968,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       date: item.date,
                       itemName: item.itemName,
                       returnRateText: item.returnRate.toString(),
+                      advanceRateText: item.advanceRate.toString(),
+                      advanceMakingText: item.advanceMaking.toString(),
                       grossWeightText: item.grossWeight.toString(),
                       lessWeightText: item.lessWeight.toString(),
                       tanchText: item.tanch.toString(),
@@ -1262,6 +1267,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             gst: '${_estimateGst.toStringAsFixed(2)}%',
             totalQuantity: _estimateTotalQuantity.toString(),
             totalWeight: _estimateWeightRangeLabel,
+            gold22Rate: _newItemRateForCategory('Gold22kt'),
+            gold18Rate: _newItemRateForCategory('Gold18kt'),
+            silverRate: _newItemRateForCategory('Silver'),
             items: _sortedEstimateItems,
           );
         },
@@ -1727,7 +1735,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       labelText: 'Purity',
                       isDense: true,
                     ),
-                    onChanged: (_) => setState(() {}),
+                    enabled: false,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -1994,7 +2002,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       labelText: 'Purity',
                       isDense: true,
                     ),
-                    onChanged: (_) => setState(() {}),
+                    enabled: false,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -3975,8 +3983,12 @@ class _AdvanceValuationDraft {
     String? chequeNumber,
   }) : _date = date ?? DateTime.now(),
        _mode = mode ?? AdvanceMode.cash,
-       amountController = TextEditingController(text: amountText ?? ''),
-       rateController = TextEditingController(text: rateText ?? ''),
+       amountController = TextEditingController(
+         text: _formatIndianNumberInput(amountText ?? ''),
+       ),
+       rateController = TextEditingController(
+         text: _formatIndianNumberInput(rateText ?? ''),
+       ),
        rateMakingController = TextEditingController(text: rateMakingText ?? ''),
        chequeNumberController = TextEditingController(text: chequeNumber ?? '');
 
@@ -4026,9 +4038,9 @@ class _AdvanceValuationDraft {
 
   bool get isEmpty => amount == 0 && rate == 0 && rateMaking == 0;
 
-  double get amount => double.tryParse(amountController.text.trim()) ?? 0;
+  double get amount => _parseFormattedDecimal(amountController.text);
 
-  double get rate => double.tryParse(rateController.text.trim()) ?? 0;
+  double get rate => _parseFormattedDecimal(rateController.text);
 
   double get rateMaking =>
       double.tryParse(rateMakingController.text.trim()) ?? 0;
@@ -4102,7 +4114,7 @@ class _AdvanceValuationEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Advance Item $index',
+                    'Advance Entry $index',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -4164,28 +4176,15 @@ class _AdvanceValuationEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: TextField(
-                    controller: item.amountController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                    ],
-                    decoration: const InputDecoration(labelText: 'Amount'),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
                     controller: item.rateController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                    ],
-                    decoration: const InputDecoration(labelText: 'Rate22kt'),
+                    inputFormatters: const [_IndianCurrencyInputFormatter()],
+                    decoration: const InputDecoration(
+                      labelText: 'Rate22',
+                      hintText: '-Unfix-',
+                    ),
                     onChanged: (_) => onChanged(),
                   ),
                 ),
@@ -4211,6 +4210,18 @@ class _AdvanceValuationEditor extends StatelessWidget {
             const SizedBox(height: 12),
             Row(
               children: [
+                Expanded(
+                  child: TextField(
+                    controller: item.amountController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: const [_IndianCurrencyInputFormatter()],
+                    decoration: const InputDecoration(labelText: 'Amount'),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: InputDecorator(
                     decoration: const InputDecoration(
@@ -4239,12 +4250,22 @@ class _AdvanceOldItemDraft {
     DateTime? date,
     String? itemName,
     String? returnRateText,
+    String? advanceRateText,
+    String? advanceMakingText,
     String? grossWeightText,
     String? lessWeightText,
     String? tanchText,
   }) : _date = date ?? DateTime.now(),
        itemNameController = TextEditingController(text: itemName ?? ''),
-       returnRateController = TextEditingController(text: returnRateText ?? ''),
+       returnRateController = TextEditingController(
+         text: _formatIndianNumberInput(returnRateText ?? ''),
+       ),
+       advanceRateController = TextEditingController(
+         text: _formatIndianNumberInput(advanceRateText ?? ''),
+       ),
+       advanceMakingController = TextEditingController(
+         text: _formatIndianNumberInput(advanceMakingText ?? ''),
+       ),
        grossWeightController = TextEditingController(
          text: grossWeightText ?? '',
        ),
@@ -4256,6 +4277,8 @@ class _AdvanceOldItemDraft {
       date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
       itemName: json['itemName'] as String? ?? '',
       returnRateText: json['returnRateText'] as String? ?? '',
+      advanceRateText: json['advanceRateText'] as String? ?? '',
+      advanceMakingText: json['advanceMakingText'] as String? ?? '',
       grossWeightText: json['grossWeightText'] as String? ?? '',
       lessWeightText: json['lessWeightText'] as String? ?? '',
       tanchText: json['tanchText'] as String? ?? '',
@@ -4265,6 +4288,8 @@ class _AdvanceOldItemDraft {
   DateTime? _date;
   final TextEditingController itemNameController;
   final TextEditingController returnRateController;
+  final TextEditingController advanceRateController;
+  final TextEditingController advanceMakingController;
   final TextEditingController grossWeightController;
   final TextEditingController lessWeightController;
   final TextEditingController tanchController;
@@ -4275,8 +4300,12 @@ class _AdvanceOldItemDraft {
     _date = value;
   }
 
-  double get returnRate =>
-      double.tryParse(returnRateController.text.trim()) ?? 0;
+  double get returnRate => _parseFormattedDecimal(returnRateController.text);
+
+  double get advanceRate => _parseFormattedDecimal(advanceRateController.text);
+
+  double get advanceMaking =>
+      _parseFormattedDecimal(advanceMakingController.text);
 
   double get grossWeight =>
       double.tryParse(grossWeightController.text.trim()) ?? 0;
@@ -4296,6 +4325,8 @@ class _AdvanceOldItemDraft {
   bool get isEmpty =>
       itemNameController.text.trim().isEmpty &&
       returnRate == 0 &&
+      advanceRate == 0 &&
+      advanceMaking == 0 &&
       grossWeight == 0 &&
       lessWeight == 0 &&
       tanch == 0;
@@ -4305,6 +4336,8 @@ class _AdvanceOldItemDraft {
       'date': date.toIso8601String(),
       'itemName': itemNameController.text,
       'returnRateText': returnRateController.text,
+      'advanceRateText': advanceRateController.text,
+      'advanceMakingText': advanceMakingController.text,
       'grossWeightText': grossWeightController.text,
       'lessWeightText': lessWeightController.text,
       'tanchText': tanchController.text,
@@ -4314,6 +4347,8 @@ class _AdvanceOldItemDraft {
   void dispose() {
     itemNameController.dispose();
     returnRateController.dispose();
+    advanceRateController.dispose();
+    advanceMakingController.dispose();
     grossWeightController.dispose();
     lessWeightController.dispose();
     tanchController.dispose();
@@ -4332,6 +4367,28 @@ class _AdvanceOldItemEditor extends StatelessWidget {
   final _AdvanceOldItemDraft item;
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
+
+  static final List<String> _tanchOptions = List<String>.generate(
+    62,
+    (index) => '.${(91 - index).toString().padLeft(2, '0')}',
+  );
+
+  String? _selectedTanchValue(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    if (_tanchOptions.contains(trimmed)) {
+      return trimmed;
+    }
+    if (trimmed.startsWith('0.')) {
+      final normalized = '.${trimmed.substring(2)}';
+      if (_tanchOptions.contains(normalized)) {
+        return normalized;
+      }
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -4373,14 +4430,16 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                     },
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: item.itemNameController,
+                    inputFormatters: [_WordCapitalizeFormatter()],
+                    decoration: const InputDecoration(labelText: 'Item Name'),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: item.itemNameController,
-              inputFormatters: [_WordCapitalizeFormatter()],
-              decoration: const InputDecoration(labelText: 'Item Name'),
-              onChanged: (_) => onChanged(),
             ),
             const SizedBox(height: 12),
             Row(
@@ -4391,16 +4450,30 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    inputFormatters: decimalInput,
-                    decoration: const InputDecoration(labelText: 'ReturnRate'),
+                    inputFormatters: const [_IndianCurrencyInputFormatter()],
+                    decoration: const InputDecoration(labelText: 'Return Bhav'),
                     onChanged: (_) => onChanged(),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: InputDecorator(
-                    decoration: const InputDecoration(labelText: 'Amount'),
-                    child: Text(_formatCurrency(item.amount)),
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _selectedTanchValue(
+                      item.tanchController.text,
+                    ),
+                    decoration: const InputDecoration(labelText: 'Tanch'),
+                    items: _tanchOptions
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      item.tanchController.text = value ?? '';
+                      onChanged();
+                    },
                   ),
                 ),
               ],
@@ -4415,10 +4488,7 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                       decimal: true,
                     ),
                     inputFormatters: decimalInput,
-                    decoration: const InputDecoration(
-                      labelText: 'Gross',
-                      suffixText: 'gm',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Gross'),
                     onChanged: (_) => onChanged(),
                   ),
                 ),
@@ -4430,11 +4500,15 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                       decimal: true,
                     ),
                     inputFormatters: decimalInput,
-                    decoration: const InputDecoration(
-                      labelText: 'Less',
-                      suffixText: 'gm',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Less'),
                     onChanged: (_) => onChanged(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InputDecorator(
+                    decoration: const InputDecoration(labelText: 'Nett'),
+                    child: Text(_formatWeight3(item.nettWeight)),
                   ),
                 ),
               ],
@@ -4444,24 +4518,38 @@ class _AdvanceOldItemEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Nett',
-                      suffixText: 'gm',
+                    decoration: const InputDecoration(labelText: 'Amount'),
+                    child: Text(_formatCurrency(item.amount)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: item.advanceRateController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
                     ),
-                    child: Text(_formatWeight3(item.nettWeight)),
+                    inputFormatters: const [_IndianCurrencyInputFormatter()],
+                    decoration: const InputDecoration(
+                      labelText: 'Advance Rate',
+                    ),
+                    onChanged: (_) => onChanged(),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
-                    controller: item.tanchController,
+                    controller: item.advanceMakingController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
-                    inputFormatters: decimalInput,
+                    inputFormatters: const [_IndianCurrencyInputFormatter()],
                     decoration: const InputDecoration(
-                      labelText: 'Tanch',
-                      suffixText: '%',
+                      labelText: 'Advance Making',
                     ),
                     onChanged: (_) => onChanged(),
                   ),
