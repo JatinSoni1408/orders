@@ -11,13 +11,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     with WidgetsBindingObserver {
   static const _ordersStorageKey = 'orders_dashboard.orders';
   static const _estimateStorageKey = 'orders_dashboard.estimate';
+  static const _authSessionStorageKey = 'orders_dashboard.auth_session';
   static const _lockedEstimatePurity = '22K';
-  static const _legacySampleOrderIds = {
-    'JW-2046',
-    'JW-2047',
-    'JW-2048',
-    'JW-2049',
-  };
   static const List<String> _newItemCategoryOptions = [
     'Gold22kt',
     'Gold18kt',
@@ -50,7 +45,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     'FixRate',
   ];
   final List<Order> _orders = [];
+  final _FirebaseAuthService _authService = const _FirebaseAuthService();
   final _RatesRepository _ratesRepository = const _RatesRepository();
+  final _FirestoreAppSyncService _appSyncService =
+      const _FirestoreAppSyncService();
+  final _TagImportService _tagImportService = const _TagImportService();
 
   OrderStatus? _selectedStatus;
   OrderSortOption _selectedOrderSort = OrderSortOption.newest;
@@ -79,6 +78,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       TextEditingController();
   final TextEditingController _newItemsSilverRateController =
       TextEditingController();
+  final TextEditingController _loginEmailController = TextEditingController();
+  final TextEditingController _loginPasswordController =
+      TextEditingController();
+  final TextEditingController _newItemsOverallDiscountController =
+      TextEditingController();
+  final TextEditingController _takeawayDiscountController =
+      TextEditingController();
   final FocusNode _estimateCustomerNameFocusNode = FocusNode();
   final FocusNode _estimateCustomerMobileFocusNode = FocusNode();
   final FocusNode _estimateAlternateMobileFocusNode = FocusNode();
@@ -86,13 +92,28 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   final List<_AdvanceValuationDraft> _advanceItems = [_AdvanceValuationDraft()];
   final List<_AdvanceOldItemDraft> _advanceOldItems = [_AdvanceOldItemDraft()];
   final List<_NewItemDraft> _newItems = [_NewItemDraft()];
+  final List<_TakeawayPaymentDraft> _takeawayPayments = [
+    _TakeawayPaymentDraft(),
+  ];
+  late final _NewItemDraft _differenceNewItem = _NewItemDraft(
+    name: 'Difference Weight',
+    category: 'Gold22kt',
+    grossWeightText: '0.000',
+    lessWeightText: '0.000',
+    isDifferenceEntry: true,
+  );
   Timer? _estimateClockTimer;
   Timer? _persistDebounceTimer;
+  Timer? _firestoreSyncDebounceTimer;
   bool _showEstimateNameError = false;
   bool _showEstimateMobileError = false;
   bool _showEstimateAlternateMobileError = false;
   bool _isRestoringLocalState = false;
   bool _isRatesLoading = false;
+  bool _isTagScanning = false;
+  bool _isAccessRoleLoading = true;
+  bool _isSigningIn = false;
+  bool _hideLoginPassword = true;
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
@@ -103,6 +124,17 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   String? _ratesUpdatedByEmail;
   DateTime? _editingOrderCreatedAt;
   String _searchQuery = '';
+  _AuthSession? _authSession;
+  AppAccessRole? _activeRole;
+  String? _accessError;
+  String? _lastSyncedOrdersJson;
+  String? _lastSyncedDraftJson;
+
+  bool get _showsLiveEstimateClock =>
+      _selectedSection == AppSection.estimateCalculator ||
+      _selectedSection == AppSection.actual;
+  bool get _isAdmin => _activeRole == AppAccessRole.admin;
+  bool get _isUser => _activeRole == AppAccessRole.user;
 
   @override
   void initState() {
@@ -118,12 +150,19 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final item in _advanceOldItems) {
       _attachAdvanceOldItemListeners(item);
     }
+    for (final item in _takeawayPayments) {
+      _attachTakeawayPaymentListeners(item);
+    }
     _attachNewItemFieldListeners();
     for (final item in _newItems) {
       _attachNewItemListeners(item);
     }
+    _attachNewItemListeners(_differenceNewItem);
     _estimateClockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) {
+        return;
+      }
+      if (!_showsLiveEstimateClock) {
         return;
       }
       setState(() {
@@ -151,9 +190,224 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         });
       }
     });
-    _restoreLocalState().whenComplete(() {
+    _restoreLocalState().then((_) => _restoreAuthSession()).whenComplete(() {
       _loadRatesFromFirestore();
     });
+  }
+
+  Future<void> _restoreAuthSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedSessionJson = prefs.getString(_authSessionStorageKey);
+    if (savedSessionJson == null) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authSession = null;
+        _activeRole = null;
+        _isAccessRoleLoading = false;
+      });
+      return;
+    }
+
+    try {
+      final savedSession = _AuthSession.fromJson(
+        jsonDecode(savedSessionJson) as Map<String, dynamic>,
+      );
+      final refreshed = await _authService.refreshSession(savedSession);
+      await prefs.setString(
+        _authSessionStorageKey,
+        jsonEncode(refreshed.toJson()),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authSession = refreshed;
+        _activeRole = refreshed.role;
+        _isAccessRoleLoading = false;
+      });
+      await _restoreStateFromFirestore();
+    } catch (_) {
+      await prefs.remove(_authSessionStorageKey);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authSession = null;
+        _activeRole = null;
+        _isAccessRoleLoading = false;
+      });
+    }
+  }
+
+  Future<void> _signInWithFirebase({
+    required String email,
+    required String password,
+  }) async {
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty || password.trim().isEmpty) {
+      setState(() {
+        _accessError = 'Enter both email and password.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSigningIn = true;
+      _accessError = null;
+    });
+
+    try {
+      final session = await _authService.signIn(
+        email: normalizedEmail,
+        password: password,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      if (session.role == AppAccessRole.admin) {
+        await prefs.setString(
+          _authSessionStorageKey,
+          jsonEncode(session.toJson()),
+        );
+      } else {
+        await prefs.remove(_authSessionStorageKey);
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _authSession = session;
+        _activeRole = session.role;
+        _isSigningIn = false;
+        _accessError = null;
+        _selectedSection = AppSection.orders;
+        _selectedStatus = null;
+      });
+      await _restoreStateFromFirestore();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isSigningIn = false;
+        _accessError = error is StateError
+            ? error.message
+            : 'Could not sign in with Firebase.';
+      });
+    }
+  }
+
+  Future<void> _signOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_authSessionStorageKey);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _orders.clear();
+      _clearEstimateForm();
+      _authSession = null;
+      _activeRole = null;
+      _accessError = null;
+      _isSigningIn = false;
+      _loginEmailController.clear();
+      _loginPasswordController.clear();
+      _hideLoginPassword = true;
+      _selectedSection = AppSection.orders;
+      _selectedStatus = null;
+      _lastSyncedOrdersJson = null;
+      _lastSyncedDraftJson = null;
+    });
+  }
+
+  Future<void> _showLoginPasswordDialog() async {
+    if (_loginEmailController.text.trim().isEmpty) {
+      setState(() {
+        _accessError = 'Enter your email first.';
+      });
+      return;
+    }
+
+    _loginPasswordController.clear();
+    _accessError = null;
+    _hideLoginPassword = true;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !_isSigningIn,
+      builder: (dialogContext) {
+        final dialogNavigator = Navigator.of(dialogContext);
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> submit() async {
+              setDialogState(() {});
+              await _signInWithFirebase(
+                email: _loginEmailController.text,
+                password: _loginPasswordController.text,
+              );
+              if (mounted && _activeRole != null) {
+                dialogNavigator.pop();
+              } else if (mounted) {
+                setDialogState(() {});
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Enter Password'),
+              content: TextField(
+                controller: _loginPasswordController,
+                autofocus: true,
+                obscureText: _hideLoginPassword,
+                enabled: !_isSigningIn,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  errorText: _accessError,
+                  suffixIcon: IconButton(
+                    onPressed: () {
+                      setDialogState(() {
+                        _hideLoginPassword = !_hideLoginPassword;
+                      });
+                    },
+                    icon: Icon(
+                      _hideLoginPassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
+                onChanged: (_) {
+                  if (_accessError != null) {
+                    setState(() {
+                      _accessError = null;
+                    });
+                    setDialogState(() {});
+                  }
+                },
+                onSubmitted: (_) => submit(),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: _isSigningIn
+                      ? null
+                      : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: _isSigningIn ? null : submit,
+                  child: _isSigningIn
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Continue'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -162,7 +416,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _persistDebounceTimer?.cancel();
-      _persistLocalState();
+      _persistLocalState(syncImmediately: true);
     }
   }
 
@@ -319,13 +573,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
-  double get _advanceTotalNetWeight {
-    return _populatedAdvanceItems.fold<double>(
-      0,
-      (total, item) => total + item.weight,
-    );
-  }
-
   List<_AdvanceOldItemDraft> get _populatedAdvanceOldItems {
     return _advanceOldItems.where((item) => !item.isEmpty).toList();
   }
@@ -335,6 +582,29 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       0,
       (total, item) => total + item.amount,
     );
+  }
+
+  List<_TakeawayPaymentDraft> get _populatedTakeawayPayments {
+    return _takeawayPayments.where((item) => !item.isEmpty).toList();
+  }
+
+  double get _takeawayPaymentsTotal {
+    return _populatedTakeawayPayments.fold<double>(
+      0,
+      (total, item) => total + item.amount,
+    );
+  }
+
+  List<TakeawayPayment> get _takeawayPaymentsForCurrentDraft {
+    return _populatedTakeawayPayments
+        .map(
+          (item) => TakeawayPayment(
+            date: item.date,
+            mode: item.mode,
+            amount: item.amount,
+          ),
+        )
+        .toList();
   }
 
   List<AdvancePayment> get _advancePaymentsForCurrentDraft {
@@ -370,8 +640,49 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         .toList();
   }
 
+  double get _differenceNetWeight {
+    final difference = _actualTotalNetWeight - _billPreviewAdvanceNetWeight;
+    return difference > 0 ? difference : 0;
+  }
+
+  bool get _shouldShowDifferenceNewItem => _differenceNetWeight > 0;
+
+  void _syncDifferenceNewItem() {
+    final weightText = _formatWeightFixed3(_differenceNetWeight);
+    if (_differenceNewItem.nameController.text != 'Difference Weight') {
+      _differenceNewItem.nameController.text = 'Difference Weight';
+    }
+    if (_differenceNewItem.grossWeightController.text != weightText) {
+      _differenceNewItem.grossWeightController.text = weightText;
+    }
+    if (_differenceNewItem.lessWeightController.text != '0.000') {
+      _differenceNewItem.lessWeightController.text = '0.000';
+    }
+    if (_differenceNewItem.categoryController.text.trim().isEmpty) {
+      _differenceNewItem.categoryController.text = 'Gold22kt';
+    }
+    final options = _makingTypeOptionsFor(_differenceNewItem.category);
+    if (!options.contains(
+      _differenceNewItem.makingTypeController.text.trim(),
+    )) {
+      _differenceNewItem.makingTypeController.text = options.first;
+    }
+  }
+
   List<_NewItemDraft> get _populatedNewItems {
-    return _newItems.where((item) => !item.isEmpty).toList();
+    final items = _newItems.where((item) => !item.isEmpty).toList();
+    if (!_shouldShowDifferenceNewItem) {
+      return items;
+    }
+    _syncDifferenceNewItem();
+    return [_differenceNewItem, ...items];
+  }
+
+  List<_NewItemDraft> get _editableManualNewItems {
+    if (_newItems.length == 1 && _newItems.first.isEmpty) {
+      return const <_NewItemDraft>[];
+    }
+    return _newItems;
   }
 
   List<String> _makingTypeOptionsFor(String category) {
@@ -420,7 +731,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   double _newItemBhav(_NewItemDraft item) {
-    return item.bhav > 0 ? item.bhav : _newItemRateForCategory(item.category);
+    final fallbackCategory = item.isDifferenceEntry
+        ? 'Gold22kt'
+        : item.category;
+    return item.bhav > 0
+        ? item.bhav
+        : _newItemRateForCategory(fallbackCategory);
   }
 
   double _newItemBaseAmount(_NewItemDraft item) {
@@ -468,11 +784,46 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
-  double get _newItemsGrandTotal {
+  double get _newItemsTotalBeforeDiscount {
     return _populatedNewItems.fold<double>(
       0,
       (total, item) => total + _newItemTotalAmount(item),
     );
+  }
+
+  double get _newItemsOverallDiscount {
+    final requested = _parseFormattedDecimal(
+      _newItemsOverallDiscountController.text,
+    );
+    final capped = requested.clamp(0, _newItemsTotalBeforeDiscount);
+    return capped.toDouble();
+  }
+
+  double get _newItemsGrandTotal {
+    final total = _newItemsTotalBeforeDiscount - _newItemsOverallDiscount;
+    return total > 0 ? total : 0;
+  }
+
+  double get _takeawayDiscount {
+    final requested = _parseFormattedDecimal(_takeawayDiscountController.text);
+    final capped = requested.clamp(0, _takeawayBalanceAfterPayments);
+    return capped.toDouble();
+  }
+
+  double get _takeawayBalanceAfterPayments {
+    final balance = _newItemsGrandTotal - _takeawayPaymentsTotal;
+    return balance > 0 ? balance : 0;
+  }
+
+  double get _takeawayFinalDueAmount {
+    final balance = _takeawayBalanceAfterPayments - _takeawayDiscount;
+    return balance > 0 ? balance : 0;
+  }
+
+  double get _takeawayRefundAmount {
+    final refund =
+        _takeawayPaymentsTotal + _takeawayDiscount - _newItemsGrandTotal;
+    return refund > 0 ? refund : 0;
   }
 
   List<MapEntry<String, double>> get _newItemsCategoryTotalEntries {
@@ -569,6 +920,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _newItemsGold22RateController,
       _newItemsGold18RateController,
       _newItemsSilverRateController,
+      _newItemsOverallDiscountController,
+      _takeawayDiscountController,
     ]) {
       controller.addListener(_schedulePersistence);
     }
@@ -631,6 +984,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
   }
 
+  void _attachTakeawayPaymentListeners(_TakeawayPaymentDraft item) {
+    item.amountController.addListener(_schedulePersistence);
+  }
+
   void _schedulePersistence() {
     if (_isRestoringLocalState) {
       return;
@@ -641,44 +998,144 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     });
   }
 
-  Future<void> _persistLocalState() async {
+  String _serializeOrdersJson() {
+    return jsonEncode(_orders.map((order) => order.toJson()).toList());
+  }
+
+  Map<String, dynamic> _buildDraftStateMap() {
+    return {
+      'selectedSection': _selectedSection.name,
+      'selectedStatus': _selectedStatus?.name,
+      'selectedOrderSort': _selectedOrderSort.name,
+      'purity': _estimatePurityController.text,
+      'gst': _estimateGstController.text,
+      'making': _estimateMakingController.text,
+      'weightRange': _estimateWeightRangeController.text,
+      'customerName': _estimateCustomerNameController.text,
+      'customerMobile': _estimateCustomerMobileController.text,
+      'alternateMobile': _estimateAlternateMobileController.text,
+      'status': _estimateStatus.name,
+      'deliveryDate': _estimateDeliveryDate.toIso8601String(),
+      'advanceItems': _advanceItems.map((item) => item.toJson()).toList(),
+      'advanceOldItems': _advanceOldItems.map((item) => item.toJson()).toList(),
+      'takeawayPayments': _takeawayPayments
+          .map((item) => item.toJson())
+          .toList(),
+      'newItemsGold22Rate': _newItemsGold22RateController.text,
+      'newItemsGold18Rate': _newItemsGold18RateController.text,
+      'newItemsSilverRate': _newItemsSilverRateController.text,
+      'newItemsOverallDiscount': _newItemsOverallDiscountController.text,
+      'takeawayDiscount': _takeawayDiscountController.text,
+      'newItems': _newItems.map((item) => item.toJson()).toList(),
+      'differenceNewItem': _differenceNewItem.toJson(),
+      'editingOrderId': _editingOrderId,
+      'editingOrderCreatedAt': _editingOrderCreatedAt?.toIso8601String(),
+      'items': _estimateItems.map((item) => item.toJson()).toList(),
+    };
+  }
+
+  String _serializeDraftJson() {
+    return jsonEncode(_buildDraftStateMap());
+  }
+
+  void _scheduleFirestoreSync({
+    String? ordersJson,
+    String? draftJson,
+    bool syncImmediately = false,
+  }) {
+    if (_isRestoringLocalState || _authSession == null) {
+      return;
+    }
+
+    final nextOrdersJson = ordersJson ?? _serializeOrdersJson();
+    final nextDraftJson = draftJson ?? _serializeDraftJson();
+    final ordersChanged = nextOrdersJson != _lastSyncedOrdersJson;
+    final draftChanged = nextDraftJson != _lastSyncedDraftJson;
+    if (!ordersChanged && !draftChanged) {
+      return;
+    }
+
+    _firestoreSyncDebounceTimer?.cancel();
+    if (syncImmediately) {
+      _syncStateToFirestore(
+        ordersJson: nextOrdersJson,
+        draftJson: nextDraftJson,
+      );
+      return;
+    }
+
+    _firestoreSyncDebounceTimer = Timer(const Duration(milliseconds: 900), () {
+      _syncStateToFirestore(
+        ordersJson: nextOrdersJson,
+        draftJson: nextDraftJson,
+      );
+    });
+  }
+
+  Future<void> _syncStateToFirestore({
+    String? ordersJson,
+    String? draftJson,
+  }) async {
+    final session = _authSession;
+    if (session == null) {
+      return;
+    }
+    final nextOrdersJson = ordersJson ?? _serializeOrdersJson();
+    final nextDraftJson = draftJson ?? _serializeDraftJson();
+    final writes = <Future<void>>[];
+
+    if (nextOrdersJson != _lastSyncedOrdersJson) {
+      writes.add(_syncOrdersCollection(session.idToken));
+    }
+    if (nextDraftJson != _lastSyncedDraftJson) {
+      writes.add(
+        _appSyncService.saveDraft(
+          idToken: session.idToken,
+          uid: session.uid,
+          draft: _buildDraftStateMap(),
+        ),
+      );
+    }
+    if (writes.isEmpty) {
+      return;
+    }
+
+    try {
+      await Future.wait(writes);
+      _lastSyncedOrdersJson = nextOrdersJson;
+      _lastSyncedDraftJson = nextDraftJson;
+    } catch (_) {}
+  }
+
+  Future<void> _syncOrdersCollection(String idToken) async {
+    final remoteOrders = await _appSyncService.fetchOrders(idToken: idToken);
+    final remoteIds = remoteOrders.map((order) => order.id).toSet();
+    final localIds = _orders.map((order) => order.id).toSet();
+
+    final writes = <Future<void>>[
+      for (final order in _orders)
+        _appSyncService.saveOrder(idToken: idToken, order: order),
+      for (final orderId in remoteIds.difference(localIds))
+        _appSyncService.deleteOrder(idToken: idToken, orderId: orderId),
+    ];
+    if (writes.isEmpty) {
+      return;
+    }
+    await Future.wait(writes);
+  }
+
+  Future<void> _persistLocalState({bool syncImmediately = false}) async {
     if (_isRestoringLocalState) {
       return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _ordersStorageKey,
-      jsonEncode(_orders.map((order) => order.toJson()).toList()),
-    );
-    await prefs.setString(
-      _estimateStorageKey,
-      jsonEncode({
-        'selectedSection': _selectedSection.name,
-        'selectedStatus': _selectedStatus?.name,
-        'selectedOrderSort': _selectedOrderSort.name,
-        'purity': _estimatePurityController.text,
-        'gst': _estimateGstController.text,
-        'making': _estimateMakingController.text,
-        'weightRange': _estimateWeightRangeController.text,
-        'customerName': _estimateCustomerNameController.text,
-        'customerMobile': _estimateCustomerMobileController.text,
-        'alternateMobile': _estimateAlternateMobileController.text,
-        'status': _estimateStatus.name,
-        'deliveryDate': _estimateDeliveryDate.toIso8601String(),
-        'advanceItems': _advanceItems.map((item) => item.toJson()).toList(),
-        'advanceOldItems': _advanceOldItems
-            .map((item) => item.toJson())
-            .toList(),
-        'newItemsGold22Rate': _newItemsGold22RateController.text,
-        'newItemsGold18Rate': _newItemsGold18RateController.text,
-        'newItemsSilverRate': _newItemsSilverRateController.text,
-        'newItems': _newItems.map((item) => item.toJson()).toList(),
-        'editingOrderId': _editingOrderId,
-        'editingOrderCreatedAt': _editingOrderCreatedAt?.toIso8601String(),
-        'items': _estimateItems.map((item) => item.toJson()).toList(),
-      }),
-    );
+    final ordersJson = _serializeOrdersJson();
+    final draftJson = _serializeDraftJson();
+    if (syncImmediately) {
+      await _syncStateToFirestore(ordersJson: ordersJson, draftJson: draftJson);
+      return;
+    }
+    _scheduleFirestoreSync(ordersJson: ordersJson, draftJson: draftJson);
   }
 
   Future<void> _loadRatesFromFirestore({bool showFeedback = false}) async {
@@ -740,172 +1197,453 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
   }
 
-  Future<void> _restoreLocalState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedOrders = prefs.getString(_ordersStorageKey);
-    final savedEstimate = prefs.getString(_estimateStorageKey);
-
-    if (savedOrders == null && savedEstimate == null) {
+  Future<void> _scanQrTagIntoNewItems() async {
+    if (_isTagScanning) {
       return;
     }
 
-    _isRestoringLocalState = true;
+    setState(() {
+      _isTagScanning = true;
+    });
+
     try {
+      final scannedValue = await Navigator.of(context).push<String>(
+        MaterialPageRoute(
+          builder: (context) => const _QrScannerPage(title: 'Scan QR Tag'),
+        ),
+      );
+      if (!mounted || scannedValue == null || scannedValue.trim().isEmpty) {
+        return;
+      }
+
+      final tag = await _tagImportService.fetchTagFromQr(scannedValue);
       if (!mounted) {
         return;
       }
 
+      final duplicate = _newItems.any(
+        (item) => item.sourceTagId == tag.sourceTagId,
+      );
+      if (duplicate) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tag ${tag.sourceTagId} is already in New Items.'),
+          ),
+        );
+        return;
+      }
+
       setState(() {
-        if (savedOrders != null) {
-          final decodedOrders = jsonDecode(savedOrders) as List<dynamic>;
+        final target = _newItems.length == 1 && _newItems.first.isEmpty
+            ? _newItems.first
+            : () {
+                final item = _NewItemDraft();
+                _newItems.add(item);
+                _attachNewItemListeners(item);
+                return item;
+              }();
+        _applyImportedTagToNewItem(target, tag);
+      });
+      _schedulePersistence();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Imported ${tag.name} into New Items.')),
+      );
+    } on FormatException catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } on StateError catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not import QR tag.')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTagScanning = false;
+        });
+      }
+    }
+  }
+
+  void _applyImportedTagToNewItem(_NewItemDraft item, _ImportedTagData tag) {
+    final makingOptions = _makingTypeOptionsFor(tag.category);
+    final categoryBhav = _newItemRateForCategory(tag.category);
+    item.nameController.text = tag.name;
+    item.categoryController.text = tag.category;
+    item.bhavController.text = categoryBhav > 0
+        ? _formatRateControllerText(categoryBhav)
+        : '';
+    item.makingTypeController.text = makingOptions.contains(tag.makingType)
+        ? tag.makingType
+        : makingOptions.first;
+    item.makingChargeController.text = tag.makingChargeText;
+    item.grossWeightController.text = tag.grossWeightText;
+    item.lessWeightController.text = tag.lessWeightText;
+    item.additionalChargeController.text = tag.additionalChargeText;
+    item.notesController.text = tag.notes;
+    item.gstEnabled = true;
+    item.gstLockedOn = tag.isHuid;
+    item.sourceTagId = tag.sourceTagId;
+    item.showNameError = false;
+    item.showWeightError = false;
+  }
+
+  void _resetDifferenceNewItem() {
+    _differenceNewItem.nameController.text = 'Difference Weight';
+    _differenceNewItem.categoryController.text = 'Gold22kt';
+    _differenceNewItem.bhavController.clear();
+    _differenceNewItem.makingTypeController.text = 'FixRate';
+    _differenceNewItem.makingChargeController.clear();
+    _differenceNewItem.grossWeightController.text = '0.000';
+    _differenceNewItem.lessWeightController.text = '0.000';
+    _differenceNewItem.additionalChargeController.clear();
+    _differenceNewItem.notesController.clear();
+    _differenceNewItem.sourceTagId = null;
+    _differenceNewItem.gstLockedOn = false;
+    _differenceNewItem.gstEnabled = true;
+    _differenceNewItem.showNameError = false;
+    _differenceNewItem.showWeightError = false;
+  }
+
+  void _hydrateNewItemDraft(
+    _NewItemDraft target, {
+    required String name,
+    required String category,
+    required String bhavText,
+    required String makingType,
+    required String makingChargeText,
+    required String grossWeightText,
+    required String lessWeightText,
+    required String additionalChargeText,
+    required bool gstEnabled,
+    required bool gstLockedOn,
+    required String? sourceTagId,
+    required String notes,
+  }) {
+    target.nameController.text = name;
+    target.categoryController.text = category;
+    target.bhavController.text = bhavText;
+    target.makingTypeController.text = makingType;
+    target.makingChargeController.text = makingChargeText;
+    target.grossWeightController.text = grossWeightText;
+    target.lessWeightController.text = lessWeightText;
+    target.additionalChargeController.text = additionalChargeText;
+    target.notesController.text = notes;
+    target.gstEnabled = gstEnabled;
+    target.gstLockedOn = gstLockedOn;
+    target.sourceTagId = sourceTagId;
+    target.showNameError = false;
+    target.showWeightError = false;
+  }
+
+  Future<Map<String, dynamic>?> _openNewItemEntryPage({
+    Map<String, dynamic>? initialData,
+    String title = 'Add New Item',
+  }) async {
+    return Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (pageContext) {
+          return _NewItemEntryPage(
+            title: title,
+            initialData: initialData,
+            gold22Rate: _newItemRateForCategory('Gold22kt'),
+            gold18Rate: _newItemRateForCategory('Gold18kt'),
+            silverRate: _newItemRateForCategory('Silver'),
+            gstRate: _estimateGst,
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openManualNewItemDialog() async {
+    final result = await _openNewItemEntryPage();
+    if (!mounted || result == null) {
+      return;
+    }
+
+    final item = _NewItemDraft.fromJson(result);
+    setState(() {
+      if (_newItems.length == 1 && _newItems.first.isEmpty) {
+        final removed = _newItems.removeAt(0);
+        removed.dispose();
+      }
+      _newItems.add(item);
+      _attachNewItemListeners(item);
+    });
+    _schedulePersistence();
+  }
+
+  Future<void> _editExistingNewItem(_NewItemDraft item) async {
+    final result = await _openNewItemEntryPage(
+      initialData: item.toJson(),
+      title: 'Edit New Item',
+    );
+    if (!mounted || result == null) {
+      return;
+    }
+
+    final updated = _NewItemDraft.fromJson(result);
+    setState(() {
+      _hydrateNewItemDraft(
+        item,
+        name: updated.nameController.text,
+        category: updated.categoryController.text,
+        bhavText: updated.bhavController.text,
+        makingType: updated.makingTypeController.text,
+        makingChargeText: updated.makingChargeController.text,
+        grossWeightText: updated.grossWeightController.text,
+        lessWeightText: updated.lessWeightController.text,
+        additionalChargeText: updated.additionalChargeController.text,
+        gstEnabled: updated.gstEnabled,
+        gstLockedOn: updated.gstLockedOn,
+        sourceTagId: updated.sourceTagId,
+        notes: updated.notesController.text,
+      );
+    });
+    updated.dispose();
+    _schedulePersistence();
+  }
+
+  void _applySavedDraftMap(Map<String, dynamic> decodedEstimate) {
+    final restoredItems =
+        (decodedEstimate['items'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  _EstimateItemDraft.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+    final restoredAdvanceItems =
+        (decodedEstimate['advanceItems'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  _AdvanceValuationDraft.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+    final restoredAdvanceOldItems =
+        (decodedEstimate['advanceOldItems'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  _AdvanceOldItemDraft.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+    final restoredTakeawayPayments =
+        (decodedEstimate['takeawayPayments'] as List<dynamic>? ?? const [])
+            .map(
+              (item) =>
+                  _TakeawayPaymentDraft.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+    final restoredNewItems =
+        (decodedEstimate['newItems'] as List<dynamic>? ?? const [])
+            .map((item) => _NewItemDraft.fromJson(item as Map<String, dynamic>))
+            .toList();
+    final restoredDifferenceNewItem = decodedEstimate['differenceNewItem'];
+
+    _selectedSection = AppSection.orders;
+
+    final savedStatus = decodedEstimate['selectedStatus'] as String?;
+    _selectedStatus = savedStatus == null
+        ? null
+        : _orderStatusFromName(savedStatus);
+    _selectedOrderSort = OrderSortOption.values.firstWhere(
+      (option) => option.name == decodedEstimate['selectedOrderSort'],
+      orElse: () => OrderSortOption.newest,
+    );
+
+    _estimatePurityController.text = _lockedEstimatePurity;
+    _estimateGstController.text = decodedEstimate['gst'] as String? ?? '3';
+    _estimateMakingController.text =
+        decodedEstimate['making'] as String? ?? '15';
+    _estimateWeightRangeController.text =
+        decodedEstimate['weightRange'] as String? ?? '';
+    _estimateCustomerNameController.text =
+        decodedEstimate['customerName'] as String? ?? '';
+    _estimateCustomerMobileController.text =
+        decodedEstimate['customerMobile'] as String? ?? '';
+    _estimateAlternateMobileController.text =
+        decodedEstimate['alternateMobile'] as String? ?? '';
+    _newItemsGold22RateController.text =
+        decodedEstimate['newItemsGold22Rate'] as String? ?? '';
+    _newItemsGold18RateController.text =
+        decodedEstimate['newItemsGold18Rate'] as String? ?? '';
+    _newItemsSilverRateController.text =
+        decodedEstimate['newItemsSilverRate'] as String? ?? '';
+    _newItemsOverallDiscountController.text =
+        decodedEstimate['newItemsOverallDiscount'] as String? ?? '';
+    _takeawayDiscountController.text =
+        decodedEstimate['takeawayDiscount'] as String? ?? '';
+    _estimateStatus = _orderStatusFromName(
+      decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
+    );
+    _estimateDeliveryDate =
+        _dateTimeFromJson(decodedEstimate['deliveryDate']) ?? DateTime.now();
+    _editingOrderId = decodedEstimate['editingOrderId'] as String?;
+    _editingOrderCreatedAt = _dateTimeFromJson(
+      decodedEstimate['editingOrderCreatedAt'],
+    );
+    _showEstimateNameError = false;
+    _showEstimateMobileError = false;
+    _showEstimateAlternateMobileError = false;
+
+    for (final item in _estimateItems) {
+      item.dispose();
+    }
+    _estimateItems
+      ..clear()
+      ..addAll(restoredItems.isEmpty ? [_EstimateItemDraft()] : restoredItems);
+    for (final item in _estimateItems) {
+      _attachEstimateItemListeners(item);
+    }
+
+    for (final item in _advanceItems) {
+      item.dispose();
+    }
+    _advanceItems
+      ..clear()
+      ..addAll(
+        restoredAdvanceItems.isEmpty
+            ? [_AdvanceValuationDraft()]
+            : restoredAdvanceItems,
+      );
+    for (final item in _advanceItems) {
+      _attachAdvanceItemListeners(item);
+    }
+
+    for (final item in _advanceOldItems) {
+      item.dispose();
+    }
+    _advanceOldItems
+      ..clear()
+      ..addAll(
+        restoredAdvanceOldItems.isEmpty
+            ? [_AdvanceOldItemDraft()]
+            : restoredAdvanceOldItems,
+      );
+    for (final item in _advanceOldItems) {
+      _attachAdvanceOldItemListeners(item);
+    }
+
+    for (final item in _takeawayPayments) {
+      item.dispose();
+    }
+    _takeawayPayments
+      ..clear()
+      ..addAll(
+        restoredTakeawayPayments.isEmpty
+            ? [_TakeawayPaymentDraft()]
+            : restoredTakeawayPayments,
+      );
+    for (final item in _takeawayPayments) {
+      _attachTakeawayPaymentListeners(item);
+    }
+
+    for (final item in _newItems) {
+      item.dispose();
+    }
+    _newItems
+      ..clear()
+      ..addAll(restoredNewItems.isEmpty ? [_NewItemDraft()] : restoredNewItems);
+    for (final item in _newItems) {
+      _attachNewItemListeners(item);
+    }
+
+    _resetDifferenceNewItem();
+    if (restoredDifferenceNewItem is Map) {
+      final draft = _NewItemDraft.fromJson(
+        Map<String, dynamic>.from(restoredDifferenceNewItem),
+      );
+      _hydrateNewItemDraft(
+        _differenceNewItem,
+        name: draft.nameController.text,
+        category: draft.categoryController.text,
+        bhavText: draft.bhavController.text,
+        makingType: draft.makingTypeController.text,
+        makingChargeText: draft.makingChargeController.text,
+        grossWeightText: draft.grossWeightController.text,
+        lessWeightText: draft.lessWeightController.text,
+        additionalChargeText: draft.additionalChargeController.text,
+        gstEnabled: draft.gstEnabled,
+        gstLockedOn: draft.gstLockedOn,
+        sourceTagId: draft.sourceTagId,
+        notes: draft.notesController.text,
+      );
+      draft.dispose();
+    }
+  }
+
+  Future<void> _restoreStateFromFirestore() async {
+    final session = _authSession;
+    if (session == null) {
+      return;
+    }
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _appSyncService.fetchOrders(idToken: session.idToken),
+        _appSyncService.fetchDraft(idToken: session.idToken, uid: session.uid),
+      ]);
+      final remoteOrders = results[0] as List<Order>;
+      final remoteDraft = results[1] as Map<String, dynamic>?;
+
+      if (!mounted) {
+        return;
+      }
+
+      final hasRemoteOrders = remoteOrders.isNotEmpty;
+      final hasRemoteDraft = remoteDraft != null;
+      if (!hasRemoteOrders && !hasRemoteDraft) {
+        _scheduleFirestoreSync(syncImmediately: true);
+        return;
+      }
+
+      _isRestoringLocalState = true;
+      setState(() {
+        if (hasRemoteOrders) {
           _orders
             ..clear()
-            ..addAll(
-              decodedOrders
-                  .map((order) => Order.fromJson(order as Map<String, dynamic>))
-                  .where((order) => !_legacySampleOrderIds.contains(order.id)),
-            );
+            ..addAll(remoteOrders);
         }
-
-        if (savedEstimate != null) {
-          final decodedEstimate =
-              jsonDecode(savedEstimate) as Map<String, dynamic>;
-          final restoredItems =
-              (decodedEstimate['items'] as List<dynamic>? ?? const [])
-                  .map(
-                    (item) => _EstimateItemDraft.fromJson(
-                      item as Map<String, dynamic>,
-                    ),
-                  )
-                  .toList();
-          final restoredAdvanceItems =
-              (decodedEstimate['advanceItems'] as List<dynamic>? ?? const [])
-                  .map(
-                    (item) => _AdvanceValuationDraft.fromJson(
-                      item as Map<String, dynamic>,
-                    ),
-                  )
-                  .toList();
-          final restoredAdvanceOldItems =
-              (decodedEstimate['advanceOldItems'] as List<dynamic>? ?? const [])
-                  .map(
-                    (item) => _AdvanceOldItemDraft.fromJson(
-                      item as Map<String, dynamic>,
-                    ),
-                  )
-                  .toList();
-          final restoredNewItems =
-              (decodedEstimate['newItems'] as List<dynamic>? ?? const [])
-                  .map(
-                    (item) =>
-                        _NewItemDraft.fromJson(item as Map<String, dynamic>),
-                  )
-                  .toList();
-
-          _selectedSection = AppSection.orders;
-
-          final savedStatus = decodedEstimate['selectedStatus'] as String?;
-          _selectedStatus = savedStatus == null
-              ? null
-              : _orderStatusFromName(savedStatus);
-          _selectedOrderSort = OrderSortOption.values.firstWhere(
-            (option) => option.name == decodedEstimate['selectedOrderSort'],
-            orElse: () => OrderSortOption.newest,
-          );
-
-          _estimatePurityController.text = _lockedEstimatePurity;
-          _estimateGstController.text =
-              decodedEstimate['gst'] as String? ?? '3';
-          _estimateMakingController.text =
-              decodedEstimate['making'] as String? ?? '15';
-          _estimateWeightRangeController.text =
-              decodedEstimate['weightRange'] as String? ?? '';
-          _estimateCustomerNameController.text =
-              decodedEstimate['customerName'] as String? ?? '';
-          _estimateCustomerMobileController.text =
-              decodedEstimate['customerMobile'] as String? ?? '';
-          _estimateAlternateMobileController.text =
-              decodedEstimate['alternateMobile'] as String? ?? '';
-          _newItemsGold22RateController.text =
-              decodedEstimate['newItemsGold22Rate'] as String? ?? '';
-          _newItemsGold18RateController.text =
-              decodedEstimate['newItemsGold18Rate'] as String? ?? '';
-          _newItemsSilverRateController.text =
-              decodedEstimate['newItemsSilverRate'] as String? ?? '';
-          _estimateStatus = _orderStatusFromName(
-            decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
-          );
-          _estimateDeliveryDate =
-              _dateTimeFromJson(decodedEstimate['deliveryDate']) ??
-              DateTime.now();
-          _editingOrderId = decodedEstimate['editingOrderId'] as String?;
-          _editingOrderCreatedAt = _dateTimeFromJson(
-            decodedEstimate['editingOrderCreatedAt'],
-          );
-          _showEstimateNameError = false;
-          _showEstimateMobileError = false;
-          _showEstimateAlternateMobileError = false;
-
-          for (final item in _estimateItems) {
-            item.dispose();
-          }
-          _estimateItems
-            ..clear()
-            ..addAll(
-              restoredItems.isEmpty ? [_EstimateItemDraft()] : restoredItems,
-            );
-
-          for (final item in _estimateItems) {
-            _attachEstimateItemListeners(item);
-          }
-
-          for (final item in _advanceItems) {
-            item.dispose();
-          }
-          _advanceItems
-            ..clear()
-            ..addAll(
-              restoredAdvanceItems.isEmpty
-                  ? [_AdvanceValuationDraft()]
-                  : restoredAdvanceItems,
-            );
-
-          for (final item in _advanceItems) {
-            _attachAdvanceItemListeners(item);
-          }
-
-          for (final item in _advanceOldItems) {
-            item.dispose();
-          }
-          _advanceOldItems
-            ..clear()
-            ..addAll(
-              restoredAdvanceOldItems.isEmpty
-                  ? [_AdvanceOldItemDraft()]
-                  : restoredAdvanceOldItems,
-            );
-
-          for (final item in _advanceOldItems) {
-            _attachAdvanceOldItemListeners(item);
-          }
-
-          for (final item in _newItems) {
-            item.dispose();
-          }
-          _newItems
-            ..clear()
-            ..addAll(
-              restoredNewItems.isEmpty ? [_NewItemDraft()] : restoredNewItems,
-            );
-
-          for (final item in _newItems) {
-            _attachNewItemListeners(item);
-          }
+        final remoteDraftData = remoteDraft;
+        if (remoteDraftData != null) {
+          _applySavedDraftMap(remoteDraftData);
         }
       });
+      _lastSyncedOrdersJson = hasRemoteOrders
+          ? jsonEncode(remoteOrders.map((order) => order.toJson()).toList())
+          : null;
+      _lastSyncedDraftJson = hasRemoteDraft ? jsonEncode(remoteDraft) : null;
+      if (!hasRemoteOrders || !hasRemoteDraft) {
+        _scheduleFirestoreSync(syncImmediately: true);
+      }
+    } catch (_) {
+      _scheduleFirestoreSync(syncImmediately: true);
+      return;
     } finally {
       _isRestoringLocalState = false;
     }
+
+    await _persistLocalState();
+  }
+
+  Future<void> _restoreLocalState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_ordersStorageKey);
+    await prefs.remove(_estimateStorageKey);
   }
 
   void _openAddOrderSheet() {
@@ -936,9 +1674,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.clear();
     _estimateCustomerMobileController.clear();
     _estimateAlternateMobileController.clear();
+    _newItemsOverallDiscountController.clear();
+    _takeawayDiscountController.clear();
     _showEstimateNameError = false;
     _showEstimateMobileError = false;
     _showEstimateAlternateMobileError = false;
+    _resetDifferenceNewItem();
     _estimateStatus = OrderStatus.pending;
 
     for (final item in _estimateItems) {
@@ -965,6 +1706,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       ..add(_AdvanceOldItemDraft());
     _attachAdvanceOldItemListeners(_advanceOldItems.first);
 
+    for (final item in _takeawayPayments) {
+      item.dispose();
+    }
+    _takeawayPayments
+      ..clear()
+      ..add(_TakeawayPaymentDraft());
+    _attachTakeawayPaymentListeners(_takeawayPayments.first);
+
     for (final item in _newItems) {
       item.dispose();
     }
@@ -986,10 +1735,17 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.text = order.customer;
     _estimateCustomerMobileController.text = order.customerPhone ?? '';
     _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
+    _newItemsOverallDiscountController.text = order.newItemsOverallDiscount > 0
+        ? _formatIndianNumberInput(order.newItemsOverallDiscount.toString())
+        : '';
+    _takeawayDiscountController.text = order.takeawayDiscount > 0
+        ? _formatIndianNumberInput(order.takeawayDiscount.toString())
+        : '';
     _showEstimateNameError = false;
     _showEstimateMobileError = false;
     _showEstimateAlternateMobileError = false;
     _estimateStatus = order.status;
+    _resetDifferenceNewItem();
 
     for (final item in _estimateItems) {
       item.dispose();
@@ -1071,30 +1827,74 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _attachAdvanceOldItemListeners(item);
     }
 
+    for (final item in _takeawayPayments) {
+      item.dispose();
+    }
+    _takeawayPayments
+      ..clear()
+      ..addAll(
+        order.takeawayPayments.isEmpty
+            ? [_TakeawayPaymentDraft()]
+            : order.takeawayPayments
+                  .map(
+                    (payment) => _TakeawayPaymentDraft(
+                      date: payment.date,
+                      mode: payment.mode,
+                      amountText: payment.amount.toString(),
+                    ),
+                  )
+                  .toList(),
+      );
+    for (final item in _takeawayPayments) {
+      _attachTakeawayPaymentListeners(item);
+    }
+
     for (final item in _newItems) {
       item.dispose();
+    }
+    final restoredRegularNewItems = <_NewItemDraft>[];
+    for (final item in order.newItems) {
+      if (item.isDifferenceEntry) {
+        _hydrateNewItemDraft(
+          _differenceNewItem,
+          name: item.name,
+          category: item.category,
+          bhavText: item.bhav > 0 ? item.bhav.toString() : '',
+          makingType: item.makingType,
+          makingChargeText: item.makingCharge.toString(),
+          grossWeightText: item.grossWeight.toString(),
+          lessWeightText: item.lessWeight.toString(),
+          additionalChargeText: item.additionalCharge.toString(),
+          gstEnabled: item.gstEnabled,
+          gstLockedOn: item.gstLockedOn,
+          sourceTagId: item.sourceTagId,
+          notes: item.notes ?? '',
+        );
+        continue;
+      }
+      restoredRegularNewItems.add(
+        _NewItemDraft(
+          name: item.name,
+          category: item.category,
+          bhavText: item.bhav > 0 ? item.bhav.toString() : '',
+          makingType: item.makingType,
+          makingChargeText: item.makingCharge.toString(),
+          grossWeightText: item.grossWeight.toString(),
+          lessWeightText: item.lessWeight.toString(),
+          additionalChargeText: item.additionalCharge.toString(),
+          gstEnabled: item.gstEnabled,
+          gstLockedOn: item.gstLockedOn,
+          sourceTagId: item.sourceTagId,
+          notes: item.notes ?? '',
+        ),
+      );
     }
     _newItems
       ..clear()
       ..addAll(
-        order.newItems.isEmpty
+        restoredRegularNewItems.isEmpty
             ? [_NewItemDraft()]
-            : order.newItems
-                  .map(
-                    (item) => _NewItemDraft(
-                      name: item.name,
-                      category: item.category,
-                      bhavText: item.bhav > 0 ? item.bhav.toString() : '',
-                      makingType: item.makingType,
-                      makingChargeText: item.makingCharge.toString(),
-                      grossWeightText: item.grossWeight.toString(),
-                      lessWeightText: item.lessWeight.toString(),
-                      additionalChargeText: item.additionalCharge.toString(),
-                      gstEnabled: item.gstEnabled,
-                      notes: item.notes ?? '',
-                    ),
-                  )
-                  .toList(),
+            : restoredRegularNewItems,
       );
     for (final item in _newItems) {
       _attachNewItemListeners(item);
@@ -1179,6 +1979,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       createdAt: _editingOrderCreatedAt ?? DateTime.now(),
       advancePayments: _advancePaymentsForCurrentDraft,
       oldItemReturns: _advanceOldItemReturnsForCurrentDraft,
+      takeawayPayments: _takeawayPaymentsForCurrentDraft,
       newItems: _populatedNewItems
           .map(
             (item) => NewOrderItem(
@@ -1191,6 +1992,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               lessWeight: item.lessWeight,
               additionalCharge: item.additionalCharge,
               gstEnabled: item.gstEnabled,
+              gstLockedOn: item.gstLockedOn,
+              sourceTagId: item.sourceTagId,
+              isDifferenceEntry: item.isDifferenceEntry,
               notes: item.notesController.text.trim().isEmpty
                   ? null
                   : item.notesController.text.trim(),
@@ -1208,6 +2012,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           ? null
           : _estimateWeightRangeController.text.trim(),
       deliveryDate: _estimateDeliveryDate,
+      newItemsOverallDiscount: _newItemsOverallDiscount,
+      takeawayDiscount: _takeawayDiscount,
     );
 
     final isEditing = _isEditingEstimate;
@@ -1420,6 +2226,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             silverRate: _newItemRateForCategory('Silver'),
             subtotal: _newItemsSubtotal,
             totalGst: _newItemsTotalGst,
+            overallDiscount: _newItemsOverallDiscount,
             grandTotal: _newItemsGrandTotal,
             items: _populatedNewItems,
           );
@@ -1463,10 +2270,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       actualTotalNetWeight: _formatWeightFixed3(_actualTotalNetWeight),
       advanceTotalAmount: _advanceTotalAmount,
       advanceOldItemsTotalAmount: _advanceOldItemsTotalAmount,
-      advanceNetWeight: _advanceTotalNetWeight,
+      advanceNetWeight: _billPreviewAdvanceNetWeight,
       newItemsSubtotal: _newItemsSubtotal,
       newItemsTotalGst: _newItemsTotalGst,
+      newItemsOverallDiscount: _newItemsOverallDiscount,
       newItemsGrandTotal: _newItemsGrandTotal,
+      takeawayPayments: _populatedTakeawayPayments,
+      takeawayPaymentsTotal: _takeawayPaymentsTotal,
+      takeawayBalanceAfterPayments: _takeawayBalanceAfterPayments,
+      takeawayDiscount: _takeawayDiscount,
+      takeawayFinalDueAmount: _takeawayFinalDueAmount,
       balanceAfterAdvance: _billPreviewBalanceAfterAdvance,
       gold22Rate: _newItemRateForCategory('Gold22kt'),
       gold18Rate: _newItemRateForCategory('Gold18kt'),
@@ -1486,6 +2299,206 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         },
       ),
     );
+  }
+
+  String _orderWeightRangeLabel(Order order) {
+    if ((order.estimateWeightRange ?? '').trim().isNotEmpty) {
+      return order.estimateWeightRange!.trim();
+    }
+    final weights = order.items
+        .map((item) => item.estimatedWeight ?? item.weight)
+        .where((weight) => weight > 0)
+        .toList();
+    if (weights.isEmpty) {
+      return '-';
+    }
+    final startWeight = weights.reduce((a, b) => a < b ? a : b);
+    final endWeight = weights.reduce((a, b) => a > b ? a : b);
+    if ((endWeight - startWeight).abs() < 0.0001) {
+      return '${_formatWeight3(startWeight)} gm';
+    }
+    return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+  }
+
+  Future<void> _openCombinedBillPrintPreviewForOrder(Order order) async {
+    final estimateDrafts = order.items
+        .map(
+          (item) => _EstimateItemDraft(
+            name: item.name,
+            purity: item.purity ?? _lockedEstimatePurity,
+            quantity: item.quantity,
+            estimatedNettWeight: item.estimatedWeight ?? item.weight,
+            grossWeight: item.grossWeight,
+            lessWeight: item.lessWeight,
+            size: item.size,
+            length: item.length,
+            notes: item.notes ?? '',
+          ),
+        )
+        .toList();
+    final advanceDrafts = order.advancePayments
+        .map(
+          (payment) => _AdvanceValuationDraft(
+            date: payment.date,
+            mode: payment.mode,
+            amountText: payment.amount.toString(),
+            rateText: payment.rate.toString(),
+            rateMakingText: payment.making.toString(),
+            chequeNumber: payment.chequeNumber,
+          ),
+        )
+        .toList();
+    final oldItemDrafts = order.oldItemReturns
+        .map(
+          (item) => _AdvanceOldItemDraft(
+            date: item.date,
+            itemName: item.itemName,
+            returnRateText: item.returnRate.toString(),
+            advanceRateText: item.advanceRate.toString(),
+            advanceMakingText: item.advanceMaking.toString(),
+            grossWeightText: item.grossWeight.toString(),
+            lessWeightText: item.lessWeight.toString(),
+            tanchText: item.tanch.toString(),
+          ),
+        )
+        .toList();
+    final newItemDrafts = order.newItems
+        .map(
+          (item) => _NewItemDraft(
+            name: item.name,
+            category: item.category,
+            bhavText: item.bhav > 0 ? item.bhav.toString() : '',
+            makingType: item.makingType,
+            makingChargeText: item.makingCharge.toString(),
+            grossWeightText: item.grossWeight.toString(),
+            lessWeightText: item.lessWeight.toString(),
+            additionalChargeText: item.additionalCharge.toString(),
+            sourceTagId: item.sourceTagId,
+            gstLockedOn: item.gstLockedOn,
+            gstEnabled: item.gstEnabled,
+            isDifferenceEntry: item.isDifferenceEntry,
+            notes: item.notes ?? '',
+          ),
+        )
+        .toList();
+    final takeawayDrafts = order.takeawayPayments
+        .map(
+          (payment) => _TakeawayPaymentDraft(
+            date: payment.date,
+            mode: payment.mode,
+            amountText: payment.amount.toString(),
+          ),
+        )
+        .toList();
+
+    final actualGrossWeight = order.items.fold<double>(
+      0,
+      (total, item) => total + (item.grossWeight ?? 0),
+    );
+    final actualLessWeight = order.items.fold<double>(
+      0,
+      (total, item) => total + (item.lessWeight ?? 0),
+    );
+    final actualNetWeight = order.items.fold<double>(0, (total, item) {
+      final storedNet = item.netWeight;
+      final computedNet = (item.grossWeight ?? 0) - (item.lessWeight ?? 0);
+      final net = storedNet ?? (computedNet > 0 ? computedNet : 0);
+      return total + (net > 0 ? net : 0);
+    });
+    final advanceTotalAmount = order.advancePayments.fold<double>(
+      0,
+      (total, payment) => total + payment.amount,
+    );
+    final advanceOldItemsTotalAmount = order.oldItemReturns.fold<double>(
+      0,
+      (total, item) => total + item.amount,
+    );
+    final advanceNetWeight =
+        order.advancePayments.fold<double>(
+          0,
+          (total, payment) => total + payment.weight,
+        ) +
+        order.oldItemReturns.fold<double>(
+          0,
+          (total, item) => total + item.nettWeight,
+        );
+    final takeawayPaymentsTotal = order.takeawayPayments.fold<double>(
+      0,
+      (total, payment) => total + payment.amount,
+    );
+    final takeawayBalanceAfterPayments = (order.total - takeawayPaymentsTotal)
+        .clamp(0, double.infinity)
+        .toDouble();
+    final takeawayDiscount = order.takeawayDiscount;
+    final takeawayFinalDueAmount =
+        (takeawayBalanceAfterPayments - takeawayDiscount)
+            .clamp(0, double.infinity)
+            .toDouble();
+
+    final preview = _CombinedBillPrintPreviewSheet(
+      customerName: order.customer,
+      customerMobile: (order.customerPhone ?? '').trim().isEmpty
+          ? '-'
+          : order.customerPhone!,
+      alternateMobile: (order.altCustomerPhone ?? '').trim().isEmpty
+          ? '-'
+          : order.altCustomerPhone!,
+      statusLabel: order.status.label,
+      deliveryDate: order.deliveryDate == null
+          ? '-'
+          : _formatEntryDate(order.deliveryDate!),
+      purity: order.estimatePurity ?? _lockedEstimatePurity,
+      making: (order.estimateMaking ?? 15).toStringAsFixed(2),
+      gstRate: order.estimateGst ?? 3,
+      estimateTotalQuantity: order.items
+          .fold<int>(0, (total, item) => total + item.quantity)
+          .toString(),
+      estimateWeightRange: _orderWeightRangeLabel(order),
+      actualTotalGrossWeight: _formatWeightFixed3(actualGrossWeight),
+      actualTotalLessWeight: _formatWeightFixed3(actualLessWeight),
+      actualTotalNetWeight: _formatWeightFixed3(actualNetWeight),
+      advanceTotalAmount: advanceTotalAmount,
+      advanceOldItemsTotalAmount: advanceOldItemsTotalAmount,
+      advanceNetWeight: advanceNetWeight,
+      newItemsSubtotal: 0,
+      newItemsTotalGst: 0,
+      newItemsOverallDiscount: order.newItemsOverallDiscount,
+      newItemsGrandTotal: order.total,
+      takeawayPayments: takeawayDrafts,
+      takeawayPaymentsTotal: takeawayPaymentsTotal,
+      takeawayBalanceAfterPayments: takeawayBalanceAfterPayments,
+      takeawayDiscount: takeawayDiscount,
+      takeawayFinalDueAmount: takeawayFinalDueAmount,
+      balanceAfterAdvance:
+          order.total - (advanceTotalAmount + advanceOldItemsTotalAmount),
+      gold22Rate: _newItemRateForCategory('Gold22kt'),
+      gold18Rate: _newItemRateForCategory('Gold18kt'),
+      silverRate: _newItemRateForCategory('Silver'),
+      estimateItems: estimateDrafts,
+      advanceItems: advanceDrafts,
+      oldItems: oldItemDrafts,
+      newItems: newItemDrafts,
+    );
+
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => preview));
+
+    for (final item in estimateDrafts) {
+      item.dispose();
+    }
+    for (final item in advanceDrafts) {
+      item.dispose();
+    }
+    for (final item in oldItemDrafts) {
+      item.dispose();
+    }
+    for (final item in newItemDrafts) {
+      item.dispose();
+    }
+    for (final item in takeawayDrafts) {
+      item.dispose();
+    }
   }
 
   bool _stepBackOrdersTab() {
@@ -1539,6 +2552,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             advancePayments: _advancePaymentsForCurrentDraft,
             oldItemReturns: _advanceOldItemReturnsForCurrentDraft,
             newItems: existingOrder.newItems,
+            takeawayPayments: existingOrder.takeawayPayments,
             customerPhone: existingOrder.customerPhone,
             altCustomerPhone: existingOrder.altCustomerPhone,
             customerPhotoPath: existingOrder.customerPhotoPath,
@@ -1547,12 +2561,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             estimateMaking: existingOrder.estimateMaking,
             estimateWeightRange: existingOrder.estimateWeightRange,
             deliveryDate: existingOrder.deliveryDate,
+            newItemsOverallDiscount: existingOrder.newItemsOverallDiscount,
+            takeawayDiscount: existingOrder.takeawayDiscount,
           );
         }
       });
     }
     _persistDebounceTimer?.cancel();
-    await _persistLocalState();
+    await _persistLocalState(syncImmediately: true);
     if (!mounted) {
       return;
     }
@@ -1695,8 +2711,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   final order = _filteredOrders[index];
                   return _OrderCard(
                     order: order,
-                    onEdit: () => _openEditOrderSheet(order),
-                    onDelete: () => _confirmDeleteOrder(order),
+                    onView: _isUser
+                        ? () => _openCombinedBillPrintPreviewForOrder(order)
+                        : null,
+                    onEdit: _isAdmin ? () => _openEditOrderSheet(order) : null,
+                    onDelete: _isAdmin
+                        ? () => _confirmDeleteOrder(order)
+                        : null,
                   );
                 },
               ),
@@ -1804,7 +2825,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    initialValue: _estimateMakingOptions.contains(
+                    initialValue:
+                        _estimateMakingOptions.contains(
                           _estimateMakingController.text.trim(),
                         )
                         ? _estimateMakingController.text.trim()
@@ -2042,7 +3064,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    initialValue: _estimateMakingOptions.contains(
+                    initialValue:
+                        _estimateMakingOptions.contains(
                           _estimateMakingController.text.trim(),
                         )
                         ? _estimateMakingController.text.trim()
@@ -2465,6 +3488,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   Widget _buildItemsBody(double contentTopPadding) {
     final populatedNewItems = _populatedNewItems;
+    final editableManualNewItems = _editableManualNewItems;
+    final showsDifferenceNewItem = _shouldShowDifferenceNewItem;
+    if (showsDifferenceNewItem) {
+      _syncDifferenceNewItem();
+    }
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -2472,24 +3500,70 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Priced Items',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Enter gross and less weight for each piece. Nett weight and line amount are calculated automatically, and item Bhav overrides the shared rate when entered.',
-              style: Theme.of(context).textTheme.bodyMedium,
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _openManualNewItemDialog,
+                  icon: const Icon(Icons.add),
+                  label: const Text('New Item'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _isTagScanning ? null : _scanQrTagIntoNewItems,
+                  icon: _isTagScanning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.qr_code_scanner_outlined),
+                  label: const Text('Scan QR Tag'),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
-            ...List.generate(_newItems.length, (index) {
-              final item = _newItems[index];
+            if (showsDifferenceNewItem)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _NewItemEditor(
+                  index: 1,
+                  item: _differenceNewItem,
+                  titleText:
+                      'Difference Weight (${_formatWeightFixed3(_differenceNetWeight)} g)',
+                  effectiveBhav: _newItemBhav(_differenceNewItem),
+                  amount: _newItemTotalAmount(_differenceNewItem),
+                  baseAmount: _newItemBaseAmount(_differenceNewItem),
+                  gstAmount: _newItemGstAmount(_differenceNewItem),
+                  makingTypeOptions: _makingTypeOptionsFor(
+                    _differenceNewItem.category,
+                  ),
+                  onChanged: () {
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onCategoryChanged: (_) {
+                    _differenceNewItem.categoryController.text = 'Gold22kt';
+                    final options = _makingTypeOptionsFor('Gold22kt');
+                    if (!options.contains(_differenceNewItem.makingType)) {
+                      _differenceNewItem.makingTypeController.text =
+                          options.first;
+                    }
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onMakingTypeChanged: (value) {
+                    _differenceNewItem.makingTypeController.text = value;
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                ),
+              ),
+            ...List.generate(editableManualNewItems.length, (index) {
+              final item = editableManualNewItems[index];
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _NewItemEditor(
-                  index: index + 1,
+                  index: index + 1 + (showsDifferenceNewItem ? 1 : 0),
                   item: item,
                   effectiveBhav: _newItemBhav(item),
                   amount: _newItemTotalAmount(item),
@@ -2514,34 +3588,18 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     setState(() {});
                     _schedulePersistence();
                   },
-                  onRemove: _newItems.length == 1
-                      ? null
-                      : () {
-                          setState(() {
-                            final removed = _newItems.removeAt(index);
-                            removed.dispose();
-                          });
-                          _schedulePersistence();
-                        },
+                  onEdit: () => _editExistingNewItem(item),
+                  onRemove: () {
+                    setState(() {
+                      final removed = editableManualNewItems[index];
+                      _newItems.remove(removed);
+                      removed.dispose();
+                    });
+                    _schedulePersistence();
+                  },
                 ),
               );
             }),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    final item = _NewItemDraft();
-                    _newItems.add(item);
-                    _attachNewItemListeners(item);
-                  });
-                  _schedulePersistence();
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add new item'),
-              ),
-            ),
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -2557,6 +3615,22 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     ),
                     const SizedBox(height: 12),
                     _EstimateSummaryRow(
+                      label: 'Actual Nett Weight',
+                      value: '${_formatWeightFixed3(_actualTotalNetWeight)} gm',
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Advance Nett Weight',
+                      value:
+                          '${_formatWeightFixed3(_billPreviewAdvanceNetWeight)} gm',
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Difference Weight',
+                      value: '${_formatWeightFixed3(_differenceNetWeight)} gm',
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
                       label: 'Items',
                       value: populatedNewItems.length.toString(),
                     ),
@@ -2569,6 +3643,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     _EstimateSummaryRow(
                       label: 'GST',
                       value: _formatCurrency(_newItemsTotalGst),
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Overall Discount',
+                      value: _formatCurrency(_newItemsOverallDiscount),
                     ),
                     const SizedBox(height: 8),
                     _EstimateSummaryRow(
@@ -2648,66 +3727,288 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return _newItemsGrandTotal - _advanceCombinedAmount;
   }
 
-  Widget _buildBillPreviewBody(double contentTopPadding) {
-    final combinedPreview = _buildCombinedBillPrintPreviewSheet();
+  double get _billPreviewAdvanceNetWeight {
+    return _populatedAdvanceItems.fold<double>(
+          0,
+          (total, item) => total + item.weight,
+        ) +
+        _populatedAdvanceOldItems.fold<double>(
+          0,
+          (total, item) => total + item.nettWeight,
+        );
+  }
 
-    return SafeArea(
+  Widget _buildTakeawaySummaryCard() {
+    return Card(
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Bill PDF Preview',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'The Bill Preview tab now renders the same live PDF preview used in the print screen for the current draft.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          Printing.layoutPdf(
-                            onLayout: combinedPreview._buildCombinedBillPdf,
-                          );
-                        },
-                        icon: const Icon(Icons.print_outlined),
-                        label: const Text('Print'),
-                      ),
-                    ),
-                  ],
+            Text(
+              'Takeaway Summary',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Payments',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            ...List.generate(_takeawayPayments.length, (index) {
+              final item = _takeawayPayments[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  bottom: index == _takeawayPayments.length - 1 ? 0 : 8,
                 ),
+                child: _TakeawayPaymentEditor(
+                  index: index,
+                  item: item,
+                  onChanged: () {
+                    setState(() {});
+                    _schedulePersistence();
+                  },
+                  onRemove: _takeawayPayments.length == 1
+                      ? null
+                      : () {
+                          setState(() {
+                            final removed = _takeawayPayments.removeAt(index);
+                            removed.dispose();
+                          });
+                          _schedulePersistence();
+                        },
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    final item = _TakeawayPaymentDraft();
+                    _takeawayPayments.add(item);
+                    _attachTakeawayPaymentListeners(item);
+                  });
+                  _schedulePersistence();
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Add payment'),
               ),
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'combined-bill-preview.pdf',
-                  build: combinedPreview._buildCombinedBillPdf,
-                ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _takeawayDiscountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
+              inputFormatters: const [_IndianCurrencyInputFormatter()],
+              decoration: const InputDecoration(
+                labelText: 'Discount',
+                hintText: 'Enter takeaway discount',
+              ),
+              onChanged: (_) {
+                setState(() {});
+                _schedulePersistence();
+              },
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBillPreviewBody(double contentTopPadding) {
+    return SafeArea(
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 16),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Order Summary',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Use the print button in the app bar to open the Order Summary PDF preview in a separate window.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildTakeawaySummaryCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBillPreviewStickyBar() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: keyboardInset),
+      child: Material(
+        color: colorScheme.surface,
+        elevation: 6,
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Received Payment',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: Colors.grey.shade700),
+                          textAlign: TextAlign.left,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatCurrency(_takeawayPaymentsTotal),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                          textAlign: TextAlign.left,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          _takeawayRefundAmount > 0
+                              ? 'Refund Amount'
+                              : 'Final Due Amount',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: Colors.grey.shade700),
+                          textAlign: TextAlign.right,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _formatCurrency(
+                            _takeawayRefundAmount > 0
+                                ? _takeawayRefundAmount
+                                : _takeawayFinalDueAmount,
+                          ),
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: _takeawayRefundAmount > 0
+                                    ? Theme.of(context).colorScheme.error
+                                    : Colors.green.shade700,
+                              ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAccessGate() {
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Sign In',
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Use your Firebase account to continue. Admin gets full access, and user accounts can view and print saved orders only.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: _loginEmailController,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        enabled: !_isSigningIn,
+                        decoration: InputDecoration(
+                          labelText: 'Email',
+                          hintText: 'you@example.com',
+                          errorText: _accessError,
+                          prefixIcon: const Icon(Icons.mail_outline),
+                        ),
+                        onChanged: (_) {
+                          if (_accessError != null) {
+                            setState(() {
+                              _accessError = null;
+                            });
+                          }
+                        },
+                        onSubmitted: (_) => _showLoginPasswordDialog(),
+                      ),
+                      const SizedBox(height: 20),
+                      FilledButton.icon(
+                        onPressed: _isSigningIn
+                            ? null
+                            : _showLoginPasswordDialog,
+                        icon: const Icon(Icons.login_outlined),
+                        label: const Text('Continue'),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Admin session stays signed in on relaunch. User session opens the sign-in page next time.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -2718,6 +4019,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     WidgetsBinding.instance.removeObserver(this);
     _estimateClockTimer?.cancel();
     _persistDebounceTimer?.cancel();
+    _firestoreSyncDebounceTimer?.cancel();
+    _loginEmailController.dispose();
+    _loginPasswordController.dispose();
     _searchController.dispose();
     _estimatePurityController.dispose();
     _estimateGstController.dispose();
@@ -2729,6 +4033,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _newItemsGold22RateController.dispose();
     _newItemsGold18RateController.dispose();
     _newItemsSilverRateController.dispose();
+    _newItemsOverallDiscountController.dispose();
+    _takeawayDiscountController.dispose();
     _estimateCustomerNameFocusNode.dispose();
     _estimateCustomerMobileFocusNode.dispose();
     _estimateAlternateMobileFocusNode.dispose();
@@ -2741,15 +4047,99 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final item in _advanceOldItems) {
       item.dispose();
     }
+    for (final item in _takeawayPayments) {
+      item.dispose();
+    }
     for (final item in _newItems) {
       item.dispose();
     }
+    _differenceNewItem.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isAccessRoleLoading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_activeRole == null) {
+      return _buildAccessGate();
+    }
+
     final contentTopPadding = MediaQuery.of(context).padding.top + 16;
+    final appBarTitle = _isUser
+        ? 'Orders'
+        : switch (_selectedSection) {
+            AppSection.orders => 'Orders',
+            AppSection.estimateCalculator =>
+              (_isEditingEstimate ? 'Edit Order' : 'New Order'),
+            AppSection.advance => 'Advance',
+            AppSection.actual => 'Actual',
+            AppSection.items => 'Items',
+            AppSection.billPreview => 'Bill Preview',
+          };
+    final appBarActions = <Widget>[
+      if (_isAdmin && _selectedSection == AppSection.estimateCalculator)
+        IconButton(
+          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          icon: const Icon(Icons.save_outlined),
+          tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+        ),
+      if (_isAdmin && _selectedSection == AppSection.actual)
+        IconButton(
+          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          icon: const Icon(Icons.save_outlined),
+          tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+        ),
+      if (_isAdmin && _selectedSection == AppSection.billPreview)
+        IconButton(
+          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          icon: const Icon(Icons.save_outlined),
+          tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+        ),
+      if (_isAdmin && _selectedSection == AppSection.items)
+        IconButton(
+          onPressed: _openBhavScreen,
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Bhav',
+        ),
+      if (_isAdmin && _selectedSection == AppSection.items)
+        IconButton(
+          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          icon: const Icon(Icons.save_outlined),
+          tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
+        ),
+      if (_isAdmin && _selectedSection == AppSection.advance)
+        IconButton(
+          onPressed: _saveAdvanceEntries,
+          icon: const Icon(Icons.save_outlined),
+          tooltip: 'Save advance entries',
+        ),
+      if (_isAdmin &&
+          (_selectedSection == AppSection.orders ||
+              _selectedSection == AppSection.estimateCalculator ||
+              _selectedSection == AppSection.advance ||
+              _selectedSection == AppSection.actual ||
+              _selectedSection == AppSection.items ||
+              _selectedSection == AppSection.billPreview))
+        IconButton(
+          onPressed: switch (_selectedSection) {
+            AppSection.orders => _openPrintPreview,
+            AppSection.estimateCalculator => _openEstimatePrintPreview,
+            AppSection.advance => _openAdvancePrintPreview,
+            AppSection.actual => _openActualPrintPreview,
+            AppSection.items => _openNewItemsPrintPreview,
+            AppSection.billPreview => _openCombinedBillPrintPreview,
+          },
+          icon: const Icon(Icons.print_outlined),
+          tooltip: 'Print preview',
+        ),
+      IconButton(
+        onPressed: _signOut,
+        icon: const Icon(Icons.logout_outlined),
+        tooltip: 'Switch access',
+      ),
+    ];
 
     return PopScope(
       canPop: false,
@@ -2775,13 +4165,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         final shouldExit = await _confirmExitApp();
         if (shouldExit) {
           _persistDebounceTimer?.cancel();
-          await _persistLocalState();
+          await _persistLocalState(syncImmediately: true);
           SystemNavigator.pop();
         }
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: _selectedSection != AppSection.orders
+          leading: _isAdmin && _selectedSection != AppSection.orders
               ? IconButton(
                   onPressed: () {
                     setState(() {
@@ -2804,126 +4194,83 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 color: Theme.of(context).colorScheme.onPrimary,
               ),
               const SizedBox(width: 12),
-              Text(switch (_selectedSection) {
-                AppSection.orders => 'Orders',
-                AppSection.estimateCalculator =>
-                  (_isEditingEstimate ? 'Edit Order' : 'New Order'),
-                AppSection.advance => 'Advance',
-                AppSection.actual => 'Actual',
-                AppSection.items => 'Items',
-                AppSection.billPreview => 'Bill Preview',
-              }),
+              Text(appBarTitle),
             ],
           ),
-          actions: [
-            if (_selectedSection == AppSection.estimateCalculator)
-              IconButton(
-                onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
-                icon: const Icon(Icons.save_outlined),
-                tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
-              ),
-            if (_selectedSection == AppSection.actual)
-              IconButton(
-                onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
-                icon: const Icon(Icons.save_outlined),
-                tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
-              ),
-            if (_selectedSection == AppSection.items)
-              IconButton(
-                onPressed: _openBhavScreen,
-                icon: const Icon(Icons.settings_outlined),
-                tooltip: 'Bhav',
-              ),
-            if (_selectedSection == AppSection.items)
-              IconButton(
-                onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
-                icon: const Icon(Icons.save_outlined),
-                tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
-              ),
-            if (_selectedSection == AppSection.advance)
-              IconButton(
-                onPressed: _saveAdvanceEntries,
-                icon: const Icon(Icons.save_outlined),
-                tooltip: 'Save advance entries',
-              ),
-            if (_selectedSection == AppSection.orders ||
-                _selectedSection == AppSection.estimateCalculator ||
-                _selectedSection == AppSection.advance ||
-                _selectedSection == AppSection.actual ||
-                _selectedSection == AppSection.items)
-              IconButton(
-                onPressed: switch (_selectedSection) {
-                  AppSection.orders => _openPrintPreview,
-                  AppSection.estimateCalculator => _openEstimatePrintPreview,
-                  AppSection.advance => _openAdvancePrintPreview,
-                  AppSection.actual => _openActualPrintPreview,
-                  AppSection.items => _openNewItemsPrintPreview,
-                  AppSection.billPreview => _openCombinedBillPrintPreview,
-                },
-                icon: const Icon(Icons.print_outlined),
-                tooltip: 'Print preview',
-              ),
-          ],
+          actions: appBarActions,
         ),
-        floatingActionButton: _selectedSection == AppSection.orders
+        floatingActionButton: _isAdmin && _selectedSection == AppSection.orders
             ? FloatingActionButton.extended(
                 onPressed: _openAddOrderSheet,
                 icon: const Icon(Icons.add),
                 label: const Text('New order'),
               )
             : null,
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _selectedSection.index,
-          onDestinationSelected: (index) {
-            final nextSection = AppSection.values[index];
-            if (_selectedSection == nextSection) {
-              return;
-            }
-            setState(() {
-              _selectedSection = nextSection;
-              if (nextSection == AppSection.orders) {
-                _selectedStatus = null;
-              }
-            });
-            _schedulePersistence();
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined),
-              label: 'Orders',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.calculate_outlined),
-              label: 'Estimate',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.account_balance_wallet_outlined),
-              label: 'Advance',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.scale_outlined),
-              label: 'Actual',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.add_box_outlined),
-              label: 'New Items',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.receipt_long_outlined),
-              label: 'Bill Preview',
-            ),
-          ],
-        ),
-        body: switch (_selectedSection) {
-          AppSection.orders => _buildOrdersBody(contentTopPadding),
-          AppSection.estimateCalculator => _buildEstimateCalculatorBody(
-            contentTopPadding,
-          ),
-          AppSection.advance => _buildAdvanceBody(contentTopPadding),
-          AppSection.actual => _buildActualBody(contentTopPadding),
-          AppSection.items => _buildItemsBody(contentTopPadding),
-          AppSection.billPreview => _buildBillPreviewBody(contentTopPadding),
-        },
+        bottomNavigationBar: _isUser
+            ? null
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_selectedSection == AppSection.billPreview)
+                    _buildBillPreviewStickyBar(),
+                  NavigationBar(
+                    selectedIndex: _selectedSection.index,
+                    onDestinationSelected: (index) {
+                      final nextSection = AppSection.values[index];
+                      if (_selectedSection == nextSection) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedSection = nextSection;
+                        if (nextSection == AppSection.orders) {
+                          _selectedStatus = null;
+                        }
+                      });
+                      _schedulePersistence();
+                    },
+                    destinations: const [
+                      NavigationDestination(
+                        icon: Icon(Icons.receipt_long_outlined),
+                        label: 'Orders',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.calculate_outlined),
+                        label: 'Estimate',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.account_balance_wallet_outlined),
+                        label: 'Advance',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.scale_outlined),
+                        label: 'Actual',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.add_box_outlined),
+                        label: 'New Items',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.receipt_long_outlined),
+                        label: 'Bill Preview',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+        body: _isUser
+            ? _buildOrdersBody(contentTopPadding)
+            : switch (_selectedSection) {
+                AppSection.orders => _buildOrdersBody(contentTopPadding),
+                AppSection.estimateCalculator => _buildEstimateCalculatorBody(
+                  contentTopPadding,
+                ),
+                AppSection.advance => _buildAdvanceBody(contentTopPadding),
+                AppSection.actual => _buildActualBody(contentTopPadding),
+                AppSection.items => _buildItemsBody(contentTopPadding),
+                AppSection.billPreview => _buildBillPreviewBody(
+                  contentTopPadding,
+                ),
+              },
       ),
     );
   }
@@ -3437,7 +4784,10 @@ class _NewItemDraft {
     String? grossWeightText,
     String? lessWeightText,
     String? additionalChargeText,
-    this.gstEnabled = true,
+    this.sourceTagId,
+    bool? gstLockedOn,
+    bool? gstEnabled,
+    this.isDifferenceEntry = false,
     String? notes,
   }) : nameController = TextEditingController(text: name ?? ''),
        categoryController = TextEditingController(text: category ?? 'Gold22kt'),
@@ -3457,7 +4807,10 @@ class _NewItemDraft {
        additionalChargeController = TextEditingController(
          text: additionalChargeText ?? '',
        ),
-       notesController = TextEditingController(text: notes ?? '');
+       notesController = TextEditingController(text: notes ?? '') {
+    this.gstLockedOn = gstLockedOn ?? false;
+    this.gstEnabled = gstEnabled ?? true;
+  }
 
   factory _NewItemDraft.fromJson(Map<String, dynamic> json) {
     return _NewItemDraft(
@@ -3469,9 +4822,34 @@ class _NewItemDraft {
       grossWeightText: json['grossWeightText'] as String? ?? '',
       lessWeightText: json['lessWeightText'] as String? ?? '',
       additionalChargeText: json['additionalChargeText'] as String? ?? '',
-      gstEnabled: json['gstEnabled'] as bool? ?? true,
+      sourceTagId: json['sourceTagId'] as String?,
+      gstLockedOn: _readJsonBool(json['gstLockedOn'], fallback: false),
+      gstEnabled: _readJsonBool(json['gstEnabled'], fallback: true),
+      isDifferenceEntry: _readJsonBool(
+        json['isDifferenceEntry'],
+        fallback: false,
+      ),
       notes: json['notes'] as String? ?? '',
     );
+  }
+
+  static bool _readJsonBool(dynamic value, {required bool fallback}) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true') {
+        return true;
+      }
+      if (normalized == 'false') {
+        return false;
+      }
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    return fallback;
   }
 
   final TextEditingController nameController;
@@ -3483,7 +4861,10 @@ class _NewItemDraft {
   final TextEditingController lessWeightController;
   final TextEditingController additionalChargeController;
   final TextEditingController notesController;
-  bool gstEnabled;
+  String? sourceTagId;
+  bool gstLockedOn = false;
+  bool gstEnabled = true;
+  final bool isDifferenceEntry;
   bool showNameError = false;
   bool showWeightError = false;
 
@@ -3564,7 +4945,10 @@ class _NewItemDraft {
       'grossWeightText': grossWeightController.text,
       'lessWeightText': lessWeightController.text,
       'additionalChargeText': additionalChargeController.text,
+      'sourceTagId': sourceTagId,
+      'gstLockedOn': gstLockedOn,
       'gstEnabled': gstEnabled,
+      'isDifferenceEntry': isDifferenceEntry,
       'notes': notesController.text,
     };
   }
@@ -3594,6 +4978,8 @@ class _NewItemEditor extends StatelessWidget {
     required this.onChanged,
     required this.onCategoryChanged,
     required this.onMakingTypeChanged,
+    this.titleText,
+    this.onEdit,
     this.onRemove,
   });
 
@@ -3607,11 +4993,14 @@ class _NewItemEditor extends StatelessWidget {
   final VoidCallback onChanged;
   final ValueChanged<String> onCategoryChanged;
   final ValueChanged<String> onMakingTypeChanged;
+  final String? titleText;
+  final VoidCallback? onEdit;
   final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
     final decimalInput = [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))];
+    final locksDifferenceWeight = item.isDifferenceEntry;
 
     return Card(
       child: Padding(
@@ -3622,12 +5011,18 @@ class _NewItemEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'New Item $index',
+                    titleText ?? 'New Item $index',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
+                if (onEdit != null)
+                  IconButton(
+                    onPressed: onEdit,
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: 'Edit item',
+                  ),
                 if (onRemove != null)
                   IconButton(
                     onPressed: onRemove,
@@ -3650,6 +5045,7 @@ class _NewItemEditor extends StatelessWidget {
                     },
                     child: TextField(
                       controller: item.nameController,
+                      readOnly: item.isDifferenceEntry,
                       inputFormatters: [_WordCapitalizeFormatter()],
                       decoration: InputDecoration(
                         labelText: 'Item Name',
@@ -3662,6 +5058,7 @@ class _NewItemEditor extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue:
                         _OrdersDashboardState._newItemCategoryOptions.contains(
                           item.category,
@@ -3692,6 +5089,7 @@ class _NewItemEditor extends StatelessWidget {
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: makingTypeOptions.contains(item.makingType)
                         ? item.makingType
                         : makingTypeOptions.first,
@@ -3777,6 +5175,7 @@ class _NewItemEditor extends StatelessWidget {
                     },
                     child: TextField(
                       controller: item.grossWeightController,
+                      readOnly: locksDifferenceWeight,
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
                       ),
@@ -3784,6 +5183,9 @@ class _NewItemEditor extends StatelessWidget {
                       decoration: InputDecoration(
                         labelText: 'Gross Weight',
                         suffixText: 'g',
+                        helperText: locksDifferenceWeight
+                            ? 'Auto from Order Nett - Advance Nett'
+                            : null,
                         errorText: item.weightError,
                       ),
                       onChanged: (_) => onChanged(),
@@ -3794,6 +5196,7 @@ class _NewItemEditor extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     controller: item.lessWeightController,
+                    readOnly: locksDifferenceWeight,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
@@ -3859,13 +5262,23 @@ class _NewItemEditor extends StatelessWidget {
                       ),
                       Switch(
                         value: item.gstEnabled,
-                        onChanged: (value) {
-                          item.gstEnabled = value;
-                          onChanged();
-                        },
+                        onChanged: item.gstLockedOn
+                            ? null
+                            : (value) {
+                                item.gstEnabled = value;
+                                onChanged();
+                              },
                       ),
                     ],
                   ),
+                  if (item.gstLockedOn)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'GST stays enabled for HUID items.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
                   Row(
                     children: [
                       Expanded(
@@ -3932,6 +5345,169 @@ class _NewItemEditor extends StatelessWidget {
               onChanged: (_) => onChanged(),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NewItemEntryPage extends StatefulWidget {
+  const _NewItemEntryPage({
+    required this.title,
+    required this.gold22Rate,
+    required this.gold18Rate,
+    required this.silverRate,
+    required this.gstRate,
+    this.initialData,
+  });
+
+  final String title;
+  final double gold22Rate;
+  final double gold18Rate;
+  final double silverRate;
+  final double gstRate;
+  final Map<String, dynamic>? initialData;
+
+  @override
+  State<_NewItemEntryPage> createState() => _NewItemEntryPageState();
+}
+
+class _NewItemEntryPageState extends State<_NewItemEntryPage> {
+  late final _NewItemDraft _draft;
+
+  @override
+  void initState() {
+    super.initState();
+    _draft = widget.initialData == null
+        ? _NewItemDraft()
+        : _NewItemDraft.fromJson(widget.initialData!);
+  }
+
+  @override
+  void dispose() {
+    _draft.dispose();
+    super.dispose();
+  }
+
+  double _rateForCategory(String category) {
+    switch (category) {
+      case 'Gold22kt':
+        return widget.gold22Rate;
+      case 'Gold18kt':
+        return widget.gold18Rate;
+      case 'Silver':
+        return widget.silverRate;
+      default:
+        return 0;
+    }
+  }
+
+  double get _effectiveBhav =>
+      _draft.bhav > 0 ? _draft.bhav : _rateForCategory(_draft.category);
+
+  double get _baseAmount {
+    final rate = _effectiveBhav;
+    switch (_draft.makingType) {
+      case 'FixRate':
+        return _draft.makingCharge;
+      case 'PerGram':
+        return (rate + _draft.makingCharge) * _draft.netWeight;
+      case 'Percentage':
+        return (rate + (rate * (_draft.makingCharge / 100))) * _draft.netWeight;
+      case 'TotalMaking':
+        return (rate * _draft.netWeight) + _draft.makingCharge;
+      default:
+        return (rate * _draft.netWeight) + _draft.makingCharge;
+    }
+  }
+
+  double get _gstAmount {
+    if (!_draft.gstEnabled || _draft.makingType == 'FixRate') {
+      return 0;
+    }
+    return _baseAmount * (widget.gstRate / 100);
+  }
+
+  double get _totalAmount => _baseAmount + _gstAmount + _draft.additionalCharge;
+
+  void _save() {
+    setState(() {
+      _draft.showNameError = true;
+      _draft.showWeightError = true;
+    });
+    if (_draft.nameController.text.trim().isEmpty ||
+        _draft.grossWeight <= 0 ||
+        _draft.netWeight <= 0) {
+      return;
+    }
+    Navigator.of(context).pop(_draft.toJson());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Back',
+        ),
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            onPressed: _save,
+            icon: const Icon(Icons.save_outlined),
+            tooltip: 'Save',
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: _NewItemEditor(
+                index: 1,
+                item: _draft,
+                titleText: 'New Item Details',
+                effectiveBhav: _effectiveBhav,
+                amount: _totalAmount,
+                baseAmount: _baseAmount,
+                gstAmount: _gstAmount,
+                makingTypeOptions: _draft.category == 'Silver'
+                    ? _OrdersDashboardState._silverMakingTypeOptions
+                    : _OrdersDashboardState._goldMakingTypeOptions,
+                onChanged: () {
+                  setState(() {});
+                },
+                onCategoryChanged: (value) {
+                  final options = value == 'Silver'
+                      ? _OrdersDashboardState._silverMakingTypeOptions
+                      : _OrdersDashboardState._goldMakingTypeOptions;
+                  setState(() {
+                    _draft.categoryController.text = value;
+                    if (!options.contains(_draft.makingType)) {
+                      _draft.makingTypeController.text = options.first;
+                    }
+                  });
+                },
+                onMakingTypeChanged: (value) {
+                  setState(() {
+                    _draft.makingTypeController.text = value;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: FilledButton.icon(
+          onPressed: _save,
+          icon: const Icon(Icons.save_outlined),
+          label: const Text('Save'),
         ),
       ),
     );
@@ -4210,6 +5786,164 @@ class _AdvanceValuationEditor extends StatelessWidget {
   }
 }
 
+class _TakeawayPaymentDraft {
+  _TakeawayPaymentDraft({DateTime? date, AdvanceMode? mode, String? amountText})
+    : _date = date ?? DateTime.now(),
+      _mode = mode ?? AdvanceMode.cash,
+      amountController = TextEditingController(
+        text: _formatIndianNumberInput(amountText ?? ''),
+      );
+
+  factory _TakeawayPaymentDraft.fromJson(Map<String, dynamic> json) {
+    return _TakeawayPaymentDraft(
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      mode: AdvanceMode.values.firstWhere(
+        (value) => value.name == ((json['mode'] as String?) ?? ''),
+        orElse: () => AdvanceMode.cash,
+      ),
+      amountText: json['amountText'] as String? ?? '',
+    );
+  }
+
+  DateTime? _date;
+  AdvanceMode? _mode;
+  final TextEditingController amountController;
+
+  DateTime get date => _date ?? DateTime.now();
+
+  set date(DateTime value) {
+    _date = value;
+  }
+
+  AdvanceMode get mode => _mode ?? AdvanceMode.cash;
+
+  set mode(AdvanceMode value) {
+    _mode = value;
+  }
+
+  double get amount => _parseFormattedDecimal(amountController.text);
+
+  bool get isEmpty => amount == 0;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date.toIso8601String(),
+      'mode': mode.name,
+      'amountText': amountController.text,
+    };
+  }
+
+  void dispose() {
+    amountController.dispose();
+  }
+}
+
+class _TakeawayPaymentEditor extends StatelessWidget {
+  const _TakeawayPaymentEditor({
+    required this.index,
+    required this.item,
+    required this.onChanged,
+    this.onRemove,
+  });
+
+  final int index;
+  final _TakeawayPaymentDraft item;
+  final VoidCallback onChanged;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 640;
+        final fields = [
+          _DateField(
+            date: item.date,
+            labelText: 'Date',
+            onDateSelected: (selected) {
+              item.date = selected;
+              onChanged();
+            },
+          ),
+          DropdownButtonFormField<AdvanceMode>(
+            initialValue: item.mode,
+            decoration: const InputDecoration(labelText: 'Mode'),
+            items: AdvanceMode.values
+                .map(
+                  (mode) =>
+                      DropdownMenuItem(value: mode, child: Text(mode.label)),
+                )
+                .toList(),
+            onChanged: (value) {
+              item.mode = value ?? AdvanceMode.cash;
+              onChanged();
+            },
+          ),
+          TextField(
+            controller: item.amountController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: const [_IndianCurrencyInputFormatter()],
+            decoration: const InputDecoration(labelText: 'Amount'),
+            onChanged: (_) => onChanged(),
+          ),
+        ];
+
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerLowest,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Theme.of(context).dividerColor),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Payment ${index + 1}',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  if (onRemove != null)
+                    IconButton(
+                      onPressed: onRemove,
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Remove payment',
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (isCompact)
+                Column(
+                  children: [
+                    fields[0],
+                    const SizedBox(height: 12),
+                    fields[1],
+                    const SizedBox(height: 12),
+                    fields[2],
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(child: fields[0]),
+                    const SizedBox(width: 12),
+                    Expanded(child: fields[1]),
+                    const SizedBox(width: 12),
+                    Expanded(child: fields[2]),
+                  ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _AdvanceOldItemDraft {
   _AdvanceOldItemDraft({
     DateTime? date,
@@ -4333,10 +6067,13 @@ class _AdvanceOldItemEditor extends StatelessWidget {
   final VoidCallback onChanged;
   final VoidCallback? onRemove;
 
-  static final List<String> _tanchOptions = List<String>.generate(
-    62,
-    (index) => '.${(91 - index).toString().padLeft(2, '0')}',
-  );
+  static final List<String> _tanchOptions = <String>[
+    '1.0',
+    ...List<String>.generate(
+      70,
+      (index) => '.${(99 - index).toString().padLeft(2, '0')}',
+    ),
+  ];
 
   String? _selectedTanchValue(String value) {
     final trimmed = value.trim();
@@ -4345,6 +6082,9 @@ class _AdvanceOldItemEditor extends StatelessWidget {
     }
     if (_tanchOptions.contains(trimmed)) {
       return trimmed;
+    }
+    if (trimmed == '1' || trimmed == '1.0' || trimmed == '1.00') {
+      return '1.0';
     }
     if (trimmed.startsWith('0.')) {
       final normalized = '.${trimmed.substring(2)}';

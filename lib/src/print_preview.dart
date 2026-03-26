@@ -152,7 +152,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     required this.advanceNetWeight,
     required this.newItemsSubtotal,
     required this.newItemsTotalGst,
+    required this.newItemsOverallDiscount,
     required this.newItemsGrandTotal,
+    required this.takeawayPayments,
+    required this.takeawayPaymentsTotal,
+    required this.takeawayBalanceAfterPayments,
+    required this.takeawayDiscount,
+    required this.takeawayFinalDueAmount,
     required this.balanceAfterAdvance,
     required this.gold22Rate,
     required this.gold18Rate,
@@ -181,7 +187,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
   final double advanceNetWeight;
   final double newItemsSubtotal;
   final double newItemsTotalGst;
+  final double newItemsOverallDiscount;
   final double newItemsGrandTotal;
+  final List<_TakeawayPaymentDraft> takeawayPayments;
+  final double takeawayPaymentsTotal;
+  final double takeawayBalanceAfterPayments;
+  final double takeawayDiscount;
+  final double takeawayFinalDueAmount;
   final double balanceAfterAdvance;
   final double gold22Rate;
   final double gold18Rate;
@@ -264,6 +276,31 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     }
   }
 
+  String _newItemNameWithNotes(_NewItemDraft item) {
+    final itemName = item.nameController.text.trim();
+    final notes = item.notesController.text.trim();
+    if (notes.isEmpty) {
+      return itemName;
+    }
+    return '$itemName ($notes)';
+  }
+
+  String _newItemMakingDisplay(_NewItemDraft item) {
+    final making = _formatCurrency(item.makingCharge);
+    switch (item.makingType) {
+      case 'PerGram':
+        return '$making / gm';
+      case 'TotalMaking':
+        return '$making T';
+      case 'FixRate':
+        return '$making FixRate';
+      case 'Percentage':
+        return '$making%';
+      default:
+        return making;
+    }
+  }
+
   Future<Uint8List> _buildShreeHeaderImage() async {
     const width = 420.0;
     const height = 64.0;
@@ -334,20 +371,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Combined Bill PDF Preview'),
+        title: const Text('Order Summary'),
       ),
       body: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Single-page combined preview using the current draft from all bill sections.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
             Expanded(
               child: Card(
                 clipBehavior: Clip.antiAlias,
@@ -356,7 +386,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                   canChangeOrientation: false,
                   canDebug: false,
                   allowSharing: false,
-                  pdfFileName: 'combined-bill-preview.pdf',
+                  pdfFileName: 'order-summary-preview.pdf',
                   build: _buildCombinedBillPdf,
                 ),
               ),
@@ -392,6 +422,44 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
         advanceList.length +
         oldItemList.length +
         newItemList.length;
+    final combinedAdvanceRows =
+        <({DateTime date, String mode, String amount, String rate, String making, String netWeight})>[
+          ...advanceList.map(
+            (item) => (
+              date: item.date,
+              mode: _advanceModeLabelWithCheque(item),
+              amount: _formatCurrency(item.amount),
+              rate: _advanceRateLabel(item.rate),
+              making: '${item.rateMaking.toStringAsFixed(2)}%',
+              netWeight: _formatWeightFixed3(item.weight),
+            ),
+          ),
+          ...oldItemList.map(
+            (item) => (
+              date: item.date,
+              mode: 'OLD - ${item.itemNameController.text.trim()}',
+              amount: _formatCurrency(item.amount),
+              rate: _advanceRateLabel(item.advanceRate),
+              making: item.advanceMaking > 0
+                  ? '${item.advanceMaking.toStringAsFixed(2)}%'
+                  : '-',
+              netWeight: _formatWeightFixed3(item.nettWeight),
+            ),
+          ),
+        ]
+          ..sort((a, b) => a.date.compareTo(b.date));
+    final combinedAdvanceTotalAmount =
+        advanceTotalAmount + advanceOldItemsTotalAmount;
+    final combinedAdvanceTotalNetWeight =
+        advanceList.fold<double>(0, (total, item) => total + item.weight) +
+        oldItemList.fold<double>(
+          0,
+          (total, item) => total + item.nettWeight,
+        );
+    final takeawayList = takeawayPayments
+        .where((item) => !item.isEmpty)
+        .toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
     final compactFontSize = totalRowCount > 28
         ? 5.4
         : totalRowCount > 18
@@ -402,8 +470,8 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     final headerFontSize = compactFontSize + 0.3;
 
     document.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a3.landscape,
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(14),
         build: (context) {
           final headingStyle = pw.TextStyle(
@@ -456,28 +524,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             );
           }
 
-          pw.Widget metricCell(String label, String value) {
-            return pw.Container(
-              padding: const pw.EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 6,
-              ),
-              decoration: pw.BoxDecoration(
-                color: PdfColors.grey100,
-                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
-                border: pw.Border.all(color: PdfColors.grey300),
-              ),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text(label, style: labelStyle),
-                  pw.SizedBox(height: 2),
-                  pw.Text(value, style: valueStyle),
-                ],
-              ),
-            );
-          }
-
           pw.Widget tableCell(
             String text, {
             required pw.TextStyle style,
@@ -513,8 +559,8 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
           }
 
           pw.Widget sectionCard({
-            required String title,
-            required String subtitle,
+            String? title,
+            String? subtitle,
             required pw.Widget child,
           }) {
             return pw.Container(
@@ -526,10 +572,16 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
-                  pw.Text(title, style: valueStyle),
-                  pw.SizedBox(height: 2),
-                  pw.Text(subtitle, style: subheadingStyle),
-                  pw.SizedBox(height: 6),
+                  if (title != null && title.trim().isNotEmpty) ...[
+                    pw.Text(title, style: valueStyle),
+                    if (subtitle != null && subtitle.trim().isNotEmpty) ...[
+                      pw.SizedBox(height: 2),
+                      pw.Text(subtitle, style: subheadingStyle),
+                      pw.SizedBox(height: 6),
+                    ] else
+                      pw.SizedBox(height: 6),
+                  ] else
+                    pw.SizedBox(height: 6),
                   child,
                 ],
               ),
@@ -545,184 +597,25 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             );
           }
 
-          pw.Widget estimateTable() {
-            if (estimateList.isEmpty) return emptyState('No estimate items');
-            return pw.Table(
-              border: pw.TableBorder.all(color: PdfColors.grey400),
-              columnWidths: const {
-                0: pw.FixedColumnWidth(18),
-                1: pw.FixedColumnWidth(30),
-                2: pw.FlexColumnWidth(1.8),
-                3: pw.FixedColumnWidth(20),
-                4: pw.FixedColumnWidth(38),
-                5: pw.FixedColumnWidth(34),
-                6: pw.FixedColumnWidth(36),
-                7: pw.FlexColumnWidth(1.4),
-              },
-              children: [
-                pw.TableRow(
-                  decoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                  children: [
-                    tableCell(
-                      'No.',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.center,
-                    ),
-                    tableCell(
-                      'Purity',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Item',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Qty',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.center,
-                    ),
-                    tableCell(
-                      'Est. Wt',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
-                    ),
-                    tableCell(
-                      'Size',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Length',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Notes',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                  ],
-                ),
-                ...estimateList.asMap().entries.map(
-                  (entry) => pw.TableRow(
-                    children: [
-                      tableCell(
-                        '${entry.key + 1}',
-                        style: tableStyle,
-                        alignment: pw.Alignment.center,
-                      ),
-                      tableCell(
-                        entry.value.purityController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.nameController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.quantityController.text.trim(),
-                        style: tableStyle,
-                        alignment: pw.Alignment.center,
-                      ),
-                      tableCell(
-                        _formatWeight3(entry.value.estimatedWeight),
-                        style: tableStyle,
-                        alignment: pw.Alignment.centerRight,
-                      ),
-                      tableCell(
-                        entry.value.sizeController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.lengthController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.notesController.text.trim(),
-                        style: tableStyle,
-                        maxLines: 2,
-                      ),
-                    ],
-                  ),
-                ),
-                pw.TableRow(
-                  decoration: const pw.BoxDecoration(color: PdfColors.grey100),
-                  children: [
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      'Total',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      estimateTotalQuantity,
-                      style: tableHeaderStyle,
-                      alignment: pw.Alignment.center,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      estimateWeightRange,
-                      style: tableHeaderStyle,
-                      alignment: pw.Alignment.centerRight,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                  ],
-                ),
-              ],
-            );
-          }
-
           pw.Widget actualTable() {
             if (estimateList.isEmpty) return emptyState('No actual items');
             return pw.Table(
               border: pw.TableBorder.all(color: PdfColors.grey400),
               columnWidths: const {
-                0: pw.FixedColumnWidth(18),
+                0: pw.FixedColumnWidth(22),
                 1: pw.FixedColumnWidth(30),
-                2: pw.FlexColumnWidth(1.7),
-                3: pw.FixedColumnWidth(20),
+                2: pw.FlexColumnWidth(2.1),
+                3: pw.FixedColumnWidth(24),
                 4: pw.FixedColumnWidth(34),
                 5: pw.FixedColumnWidth(34),
                 6: pw.FixedColumnWidth(34),
-                7: pw.FixedColumnWidth(34),
-                8: pw.FixedColumnWidth(36),
-                9: pw.FlexColumnWidth(1.4),
               },
               children: [
                 pw.TableRow(
                   decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                   children: [
                     tableCell(
-                      'No.',
+                      'S No',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.center,
@@ -733,9 +626,10 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey200,
                     ),
                     tableCell(
-                      'Item',
+                      'Item Name',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.center,
                     ),
                     tableCell(
                       'Qty',
@@ -761,21 +655,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.centerRight,
                     ),
-                    tableCell(
-                      'Size',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Length',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Notes',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
                   ],
                 ),
                 ...estimateList.asMap().entries.map(
@@ -791,7 +670,14 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         style: tableStyle,
                       ),
                       tableCell(
-                        entry.value.nameController.text.trim(),
+                        (() {
+                          final itemName = entry.value.nameController.text.trim();
+                          final notes = entry.value.notesController.text.trim();
+                          if (notes.isEmpty) {
+                            return itemName;
+                          }
+                          return '$itemName ($notes)';
+                        })(),
                         style: tableStyle,
                       ),
                       tableCell(
@@ -813,19 +699,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         _formatWeightFixed3(entry.value.actualNetWeight),
                         style: tableStyle,
                         alignment: pw.Alignment.centerRight,
-                      ),
-                      tableCell(
-                        entry.value.sizeController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.lengthController.text.trim(),
-                        style: tableStyle,
-                      ),
-                      tableCell(
-                        entry.value.notesController.text.trim(),
-                        style: tableStyle,
-                        maxLines: 2,
                       ),
                     ],
                   ),
@@ -872,21 +745,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       alignment: pw.Alignment.centerRight,
                       backgroundColor: PdfColors.grey100,
                     ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
                   ],
                 ),
               ],
@@ -900,136 +758,10 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                if (advanceList.isNotEmpty)
-                  pw.Table(
-                    border: pw.TableBorder.all(color: PdfColors.grey400),
-                    columnWidths: const {
-                      0: pw.FixedColumnWidth(34),
-                      1: pw.FixedColumnWidth(82),
-                      2: pw.FixedColumnWidth(42),
-                      3: pw.FixedColumnWidth(58),
-                      4: pw.FixedColumnWidth(42),
-                      5: pw.FixedColumnWidth(38),
-                    },
-                    children: [
-                      pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200,
-                        ),
-                        children: [
-                          tableCell(
-                            'Date',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                          ),
-                          tableCell(
-                            'Mode',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                          ),
-                          tableCell(
-                            'Amount',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                            alignment: pw.Alignment.centerRight,
-                          ),
-                          tableCell(
-                            'Rate 22/22 K',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                            alignment: pw.Alignment.centerRight,
-                          ),
-                          tableCell(
-                            'Making%',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                            alignment: pw.Alignment.centerRight,
-                          ),
-                          tableCell(
-                            'Net Wt',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey200,
-                            alignment: pw.Alignment.centerRight,
-                          ),
-                        ],
-                      ),
-                      ...advanceList.map(
-                        (item) => pw.TableRow(
-                          children: [
-                            tableCell(
-                              _formatEntryDate(item.date),
-                              style: tableStyle,
-                            ),
-                            tableCell(
-                              _advanceModeLabelWithCheque(item),
-                              style: tableStyle,
-                            ),
-                            tableCell(
-                              _formatCurrency(item.amount),
-                              style: tableStyle,
-                              alignment: pw.Alignment.centerRight,
-                            ),
-                            tableCell(
-                              _advanceRateLabel(item.rate),
-                              style: tableStyle,
-                              alignment: pw.Alignment.centerRight,
-                            ),
-                            tableCell(
-                              '${item.rateMaking.toStringAsFixed(2)}%',
-                              style: tableStyle,
-                              alignment: pw.Alignment.centerRight,
-                            ),
-                            tableCell(
-                              _formatWeight3(item.weight),
-                              style: tableStyle,
-                              alignment: pw.Alignment.centerRight,
-                            ),
-                          ],
-                        ),
-                      ),
-                      pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100,
-                        ),
-                        children: [
-                          tableCell(
-                            '',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                          tableCell(
-                            'Total',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                          tableCell(
-                            _formatCurrency(advanceTotalAmount),
-                            style: tableHeaderStyle,
-                            alignment: pw.Alignment.centerRight,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                          tableCell(
-                            '',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                          tableCell(
-                            '',
-                            style: tableHeaderStyle,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                          tableCell(
-                            _formatWeight3(advanceNetWeight),
-                            style: tableHeaderStyle,
-                            alignment: pw.Alignment.centerRight,
-                            backgroundColor: PdfColors.grey100,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                if (advanceList.isNotEmpty && oldItemList.isNotEmpty)
-                  pw.SizedBox(height: 6),
+                if (oldItemList.isNotEmpty)
+                  pw.Text('Old Items Details', style: tableHeaderStyle),
+                if (oldItemList.isNotEmpty)
+                  pw.SizedBox(height: 4),
                 if (oldItemList.isNotEmpty)
                   pw.Table(
                     border: pw.TableBorder.all(color: PdfColors.grey400),
@@ -1090,7 +822,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             scaleDown: true,
                           ),
                           tableCell(
-                            'Rate',
+                            'Return',
                             style: tableHeaderStyle,
                             backgroundColor: PdfColors.grey200,
                             alignment: pw.Alignment.center,
@@ -1119,19 +851,19 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                               scaleDown: true,
                             ),
                             tableCell(
-                              _formatWeight3(item.grossWeight),
+                              _formatWeightFixed3(item.grossWeight),
                               style: tableStyle,
                               alignment: pw.Alignment.centerRight,
                               scaleDown: true,
                             ),
                             tableCell(
-                              _formatWeight3(item.lessWeight),
+                              _formatWeightFixed3(item.lessWeight),
                               style: tableStyle,
                               alignment: pw.Alignment.centerRight,
                               scaleDown: true,
                             ),
                             tableCell(
-                              _formatWeight3(item.nettWeight),
+                              _formatWeightFixed3(item.nettWeight),
                               style: tableStyle,
                               alignment: pw.Alignment.centerRight,
                               scaleDown: true,
@@ -1210,6 +942,147 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       ),
                     ],
                   ),
+                if (oldItemList.isNotEmpty && combinedAdvanceRows.isNotEmpty)
+                  pw.SizedBox(height: 8),
+                if (combinedAdvanceRows.isNotEmpty)
+                  pw.Text('Advance', style: valueStyle),
+                if (combinedAdvanceRows.isNotEmpty)
+                  pw.SizedBox(height: 2),
+                if (combinedAdvanceRows.isNotEmpty)
+                  pw.Text(
+                    'Net Wt ${_formatWeight3(combinedAdvanceTotalNetWeight)} gm',
+                    style: subheadingStyle,
+                  ),
+                if (combinedAdvanceRows.isNotEmpty)
+                  pw.SizedBox(height: 6),
+                if (combinedAdvanceRows.isNotEmpty)
+                  pw.Table(
+                    border: pw.TableBorder.all(color: PdfColors.grey400),
+                    columnWidths: const {
+                      0: pw.FixedColumnWidth(34),
+                      1: pw.FixedColumnWidth(82),
+                      2: pw.FixedColumnWidth(42),
+                      3: pw.FixedColumnWidth(58),
+                      4: pw.FixedColumnWidth(42),
+                      5: pw.FixedColumnWidth(38),
+                    },
+                    children: [
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey200,
+                        ),
+                        children: [
+                          tableCell(
+                            'Date',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                          ),
+                          tableCell(
+                            'Mode',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                          ),
+                          tableCell(
+                            'Amount',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            'Rate 22/22 K',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            'Making%',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                          tableCell(
+                            'Net Wt',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                        ],
+                      ),
+                      ...combinedAdvanceRows.map(
+                        (entry) => pw.TableRow(
+                          children: [
+                            tableCell(
+                              _formatEntryDate(entry.date),
+                              style: tableStyle,
+                            ),
+                            tableCell(
+                              entry.mode,
+                              style: tableStyle,
+                            ),
+                            tableCell(
+                              entry.amount,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                            ),
+                            tableCell(
+                              entry.rate,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                            ),
+                            tableCell(
+                              entry.making,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                            ),
+                            tableCell(
+                              entry.netWeight,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                            ),
+                          ],
+                        ),
+                      ),
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey100,
+                        ),
+                        children: [
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            'Total',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            _formatCurrency(combinedAdvanceTotalAmount),
+                            style: tableHeaderStyle,
+                            alignment: pw.Alignment.centerRight,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            _formatWeightFixed3(combinedAdvanceTotalNetWeight),
+                            style: tableHeaderStyle,
+                            alignment: pw.Alignment.centerRight,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
               ],
             );
           }
@@ -1219,62 +1092,40 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             return pw.Table(
               border: pw.TableBorder.all(color: PdfColors.grey400),
               columnWidths: const {
-                0: pw.FixedColumnWidth(18),
-                1: pw.FlexColumnWidth(1.55),
-                2: pw.FixedColumnWidth(32),
-                3: pw.FixedColumnWidth(40),
-                4: pw.FlexColumnWidth(1.05),
-                5: pw.FixedColumnWidth(44),
-                6: pw.FixedColumnWidth(40),
-                7: pw.FixedColumnWidth(34),
-                8: pw.FixedColumnWidth(34),
-                9: pw.FixedColumnWidth(34),
-                10: pw.FixedColumnWidth(38),
-                11: pw.FixedColumnWidth(24),
-                12: pw.FixedColumnWidth(44),
+                0: pw.FixedColumnWidth(22),
+                1: pw.FlexColumnWidth(2.2),
+                2: pw.FixedColumnWidth(36),
+                3: pw.FixedColumnWidth(34),
+                4: pw.FixedColumnWidth(34),
+                5: pw.FixedColumnWidth(34),
+                6: pw.FixedColumnWidth(42),
+                7: pw.FixedColumnWidth(54),
+                8: pw.FixedColumnWidth(46),
+                9: pw.FixedColumnWidth(42),
+                10: pw.FixedColumnWidth(48),
               },
               children: [
                 pw.TableRow(
                   decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                   children: [
                     tableCell(
-                      'No.',
+                      'S No',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.center,
+                      maxLines: 2,
+                    ),
+                    tableCell(
+                      'Item Name',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.center,
                     ),
                     tableCell(
-                      'Item',
+                      'Purity',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Cat',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Bhav',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
-                    ),
-                    tableCell(
-                      'Notes',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                    ),
-                    tableCell(
-                      'Making Type',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      maxLines: 2,
-                    ),
-                    tableCell(
-                      'Making',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
+                      alignment: pw.Alignment.center,
                     ),
                     tableCell(
                       'Gross',
@@ -1295,16 +1146,28 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      'Addl.',
+                      'Rate',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      'GST',
+                      'Making',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.center,
+                    ),
+                    tableCell(
+                      'Additionals',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.centerRight,
+                    ),
+                    tableCell(
+                      'Others',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
                       'Total',
@@ -1323,28 +1186,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         alignment: pw.Alignment.center,
                       ),
                       tableCell(
-                        entry.value.nameController.text.trim(),
+                        _newItemNameWithNotes(entry.value),
                         style: tableStyle,
                       ),
                       tableCell(
                         _newItemCategoryLabel(entry.value.category),
                         style: tableStyle,
-                      ),
-                      tableCell(
-                        _formatCurrency(_newItemBhav(entry.value)),
-                        style: tableStyle,
-                        alignment: pw.Alignment.centerRight,
-                      ),
-                      tableCell(
-                        entry.value.notesController.text.trim(),
-                        style: tableStyle,
-                        maxLines: 2,
-                      ),
-                      tableCell(entry.value.makingType, style: tableStyle),
-                      tableCell(
-                        _formatCurrency(entry.value.makingCharge),
-                        style: tableStyle,
-                        alignment: pw.Alignment.centerRight,
+                        alignment: pw.Alignment.center,
                       ),
                       tableCell(
                         _formatWeightFixed3(entry.value.grossWeight),
@@ -1362,14 +1210,27 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
-                        _formatCurrency(entry.value.additionalCharge),
+                        _formatCurrency(_newItemBhav(entry.value)),
                         style: tableStyle,
                         alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
-                        entry.value.gstEnabled ? 'Yes' : 'No',
+                        _newItemMakingDisplay(entry.value),
                         style: tableStyle,
-                        alignment: pw.Alignment.center,
+                      ),
+                      tableCell(
+                        entry.value.additionalCharge > 0
+                            ? _formatCurrency(entry.value.additionalCharge)
+                            : '-',
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
+                        _newItemGstAmount(entry.value) > 0
+                            ? _formatCurrency(_newItemGstAmount(entry.value))
+                            : '-',
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
                         _formatCurrency(_newItemTotal(entry.value)),
@@ -1388,11 +1249,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
                       'Total',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
@@ -1403,32 +1259,29 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      '',
+                      _formatWeightFixed3(
+                        newItemList.fold<double>(
+                          0,
+                          (total, item) => total + item.grossWeight,
+                        ),
+                      ),
                       style: tableHeaderStyle,
+                      alignment: pw.Alignment.centerRight,
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      '',
+                      _formatWeightFixed3(
+                        newItemList.fold<double>(
+                          0,
+                          (total, item) => total + item.lessWeight,
+                        ),
+                      ),
                       style: tableHeaderStyle,
+                      alignment: pw.Alignment.centerRight,
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      _formatWeight3(
+                      _formatWeightFixed3(
                         newItemList.fold<double>(
                           0,
                           (total, item) => total + item.netWeight,
@@ -1449,7 +1302,34 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      _formatCurrency(newItemsGrandTotal),
+                      _formatCurrency(
+                        newItemList.fold<double>(
+                          0,
+                          (total, item) => total + item.additionalCharge,
+                        ),
+                      ),
+                      style: tableHeaderStyle,
+                      alignment: pw.Alignment.centerRight,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
+                      _formatCurrency(
+                        newItemList.fold<double>(
+                          0,
+                          (total, item) => total + _newItemGstAmount(item),
+                        ),
+                      ),
+                      style: tableHeaderStyle,
+                      alignment: pw.Alignment.centerRight,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
+                      _formatCurrency(
+                        newItemList.fold<double>(
+                          0,
+                          (total, item) => total + _newItemTotal(item),
+                        ),
+                      ),
                       style: tableHeaderStyle,
                       alignment: pw.Alignment.centerRight,
                       backgroundColor: PdfColors.grey100,
@@ -1460,157 +1340,228 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             );
           }
 
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              pw.Center(
-                child: shreeHeaderImage == null
-                    ? pw.Text('Combined Bill Preview', style: headingStyle)
-                    : pw.Column(
-                        children: [
-                          pw.Image(shreeHeaderImage, width: 110),
-                          pw.SizedBox(height: 4),
-                          pw.Text('Combined Bill Preview', style: headingStyle),
-                        ],
-                      ),
-              ),
-              pw.SizedBox(height: 4),
-              pw.Center(
-                child: pw.Text(
-                  'Single page summary of Estimate, Actual, Advance and New Items',
-                  style: subheadingStyle,
-                ),
-              ),
-              pw.SizedBox(height: 8),
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(child: infoCell('Status', statusLabel)),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: infoCell('Whatsapp Number', customerMobile),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
-                ],
-              ),
-              pw.SizedBox(height: 6),
-              pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(
-                    child: infoCell('Alternate Mobile', alternateMobile),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: infoCell(
-                      'Rates',
-                      '22K ${_formatCurrency(gold22Rate)} | 18K ${_formatCurrency(gold18Rate)} | Silver ${_formatCurrency(silverRate)}',
-                    ),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 8),
-              pw.Row(
-                children: [
-                  pw.Expanded(
-                    child: metricCell('Estimate Range', estimateWeightRange),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: metricCell(
-                      'Actual Nett',
-                      '$actualTotalNetWeight gm',
-                    ),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: metricCell(
-                      'Advance Credit',
-                      _formatCurrency(
-                        advanceTotalAmount + advanceOldItemsTotalAmount,
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: metricCell(
-                      'New Items Total',
-                      _formatCurrency(newItemsGrandTotal),
-                    ),
-                  ),
-                  pw.SizedBox(width: 6),
-                  pw.Expanded(
-                    child: metricCell(
-                      balanceAfterAdvance < 0
-                          ? 'Excess Advance'
-                          : 'Balance After Advance',
-                      _formatCurrency(balanceAfterAdvance.abs()),
-                    ),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 8),
-              pw.Expanded(
-                child: pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          pw.Widget takeawaySummaryTable() {
+            final takeawayRefundAmount =
+                takeawayPaymentsTotal + takeawayDiscount - newItemsGrandTotal;
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Row(
                   children: [
                     pw.Expanded(
-                      child: pw.Row(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Expanded(
-                            child: sectionCard(
-                              title: 'Estimate',
-                              subtitle:
-                                  'Qty $estimateTotalQuantity | Range $estimateWeightRange gm | Purity $purity | Making $making | GST ${gstRate.toStringAsFixed(2)}%',
-                              child: estimateTable(),
-                            ),
-                          ),
-                          pw.SizedBox(width: 8),
-                          pw.Expanded(
-                            child: sectionCard(
-                              title: 'Actual',
-                              subtitle:
-                                  'Gross $actualTotalGrossWeight gm | Less $actualTotalLessWeight gm | Nett $actualTotalNetWeight gm',
-                              child: actualTable(),
-                            ),
-                          ),
-                        ],
+                      child: pw.Text(
+                        'Total Due Amount',
+                        style: labelStyle,
                       ),
                     ),
-                    pw.SizedBox(height: 8),
-                    pw.Expanded(
-                      child: pw.Row(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Expanded(
-                            child: sectionCard(
-                              title: 'Advance',
-                              subtitle:
-                                  'Cash/UPI ${_formatCurrency(advanceTotalAmount)} | Old Items ${_formatCurrency(advanceOldItemsTotalAmount)} | Net Wt ${_formatWeight3(advanceNetWeight)} gm',
-                              child: advanceTable(),
-                            ),
-                          ),
-                          pw.SizedBox(width: 8),
-                          pw.Expanded(
-                            child: sectionCard(
-                              title: 'New Items',
-                              subtitle:
-                                  'Base + Extras ${_formatCurrency(newItemsSubtotal)} | GST ${_formatCurrency(newItemsTotalGst)} | Grand Total ${_formatCurrency(newItemsGrandTotal)}',
-                              child: newItemsTable(),
-                            ),
-                          ),
-                        ],
-                      ),
+                    pw.Text(
+                      _formatCurrency(newItemsGrandTotal),
+                      style: valueStyle,
                     ),
                   ],
                 ),
+                pw.SizedBox(height: 8),
+                if (takeawayList.isNotEmpty)
+                  pw.Table(
+                    border: pw.TableBorder.all(color: PdfColors.grey400),
+                    columnWidths: const {
+                      0: pw.FixedColumnWidth(54),
+                      1: pw.FlexColumnWidth(1.2),
+                      2: pw.FixedColumnWidth(58),
+                    },
+                    children: [
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey200,
+                        ),
+                        children: [
+                          tableCell(
+                            'Date',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                          ),
+                          tableCell(
+                            'Mode',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                          ),
+                          tableCell(
+                            'Amount',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                          ),
+                        ],
+                      ),
+                      ...takeawayList.map(
+                        (item) => pw.TableRow(
+                          children: [
+                            tableCell(
+                              _formatEntryDate(item.date),
+                              style: tableStyle,
+                            ),
+                            tableCell(
+                              item.mode.label,
+                              style: tableStyle,
+                            ),
+                            tableCell(
+                              _formatCurrency(item.amount),
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                            ),
+                          ],
+                        ),
+                      ),
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey100,
+                        ),
+                        children: [
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            'Total',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            _formatCurrency(takeawayPaymentsTotal),
+                            style: tableHeaderStyle,
+                            alignment: pw.Alignment.centerRight,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                        ],
+                      ),
+                    ],
+                  )
+                else
+                  emptyState('No takeaway payments'),
+                pw.SizedBox(height: 8),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(
+                        'Total Due Amount After Payments',
+                        style: labelStyle,
+                      ),
+                    ),
+                    pw.Text(
+                      _formatCurrency(takeawayBalanceAfterPayments),
+                      style: valueStyle,
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(
+                        'Discount',
+                        style: labelStyle,
+                      ),
+                    ),
+                    pw.Text(
+                      _formatCurrency(takeawayDiscount),
+                      style: valueStyle,
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(
+                        takeawayRefundAmount > 0
+                            ? 'How Much To Refund'
+                            : 'Final Due Amount',
+                        style: labelStyle,
+                      ),
+                    ),
+                    pw.Text(
+                      _formatCurrency(
+                        takeawayRefundAmount > 0
+                            ? takeawayRefundAmount
+                            : takeawayFinalDueAmount,
+                      ),
+                      style: valueStyle,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          }
+
+          return [
+            pw.Center(
+              child: shreeHeaderImage == null
+                  ? pw.Text('Order Summary', style: headingStyle)
+                  : pw.Column(
+                      children: [
+                        pw.Image(shreeHeaderImage, width: 110),
+                        pw.SizedBox(height: 4),
+                        pw.Text('Order Summary', style: headingStyle),
+                      ],
+                    ),
+            ),
+            pw.SizedBox(height: 8),
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
+                pw.SizedBox(width: 6),
+                pw.Expanded(
+                  child: infoCell('Whatsapp Number', customerMobile),
+                ),
+                pw.SizedBox(width: 6),
+                pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+            sectionCard(
+              title: 'Order',
+              child: actualTable(),
+            ),
+            pw.SizedBox(height: 10),
+            sectionCard(
+              child: advanceTable(),
+            ),
+            pw.SizedBox(height: 10),
+            sectionCard(
+              title: 'New Items',
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  newItemsTable(),
+                  if (newItemsOverallDiscount > 0) ...[
+                    pw.SizedBox(height: 6),
+                    pw.Align(
+                      alignment: pw.Alignment.centerRight,
+                      child: pw.Text(
+                        'Overall Discount ${_formatCurrency(newItemsOverallDiscount)}',
+                        style: subheadingStyle,
+                      ),
+                    ),
+                  ],
+                  pw.SizedBox(height: 6),
+                  pw.Align(
+                    alignment: pw.Alignment.centerRight,
+                    child: pw.Text(
+                      'Total Due Amount ${_formatCurrency(newItemsGrandTotal)}',
+                      style: valueStyle,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          );
+            ),
+            pw.SizedBox(height: 10),
+            sectionCard(
+              title: 'Takeaway Summary',
+              child: takeawaySummaryTable(),
+            ),
+          ];
         },
       ),
     );
@@ -1739,7 +1690,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Estimate PDF Preview'),
+        title: const Text('Order Estimate PDF Preview'),
       ),
       body: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -1864,6 +1815,12 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         minWidth: 30,
         maxWidth: 42,
       );
+      final purityColumnWidth = dynamicColumnWidth(
+        'Purity',
+        items.map((item) => item.purityController.text),
+        minWidth: 40,
+        maxWidth: 54,
+      );
       var itemNameColumnWidth = dynamicColumnWidth(
         'Item Name',
         items.map((item) => item.nameController.text),
@@ -1891,6 +1848,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
       final availableTableWidth = pageFormat.width - 32;
       final totalTableWidth =
           serialColumnWidth +
+          purityColumnWidth +
           itemNameColumnWidth +
           quantityColumnWidth +
           estimatedWeightColumnWidth +
@@ -2192,10 +2150,11 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   border: pw.TableBorder.all(color: PdfColors.grey400),
                   columnWidths: {
                     0: pw.FixedColumnWidth(serialColumnWidth),
-                    1: pw.FixedColumnWidth(itemNameColumnWidth),
-                    2: pw.FixedColumnWidth(quantityColumnWidth),
-                    3: pw.FixedColumnWidth(estimatedWeightColumnWidth),
-                    4: pw.FixedColumnWidth(notesColumnWidth),
+                    1: pw.FixedColumnWidth(purityColumnWidth),
+                    2: pw.FixedColumnWidth(itemNameColumnWidth),
+                    3: pw.FixedColumnWidth(quantityColumnWidth),
+                    4: pw.FixedColumnWidth(estimatedWeightColumnWidth),
+                    5: pw.FixedColumnWidth(notesColumnWidth),
                   },
                   defaultVerticalAlignment:
                       pw.TableCellVerticalAlignment.middle,
@@ -2207,6 +2166,12 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                       children: [
                         tableCell(
                           'S No',
+                          style: tableHeaderStyle,
+                          alignment: pw.Alignment.center,
+                          backgroundColor: PdfColors.grey200,
+                        ),
+                        tableCell(
+                          'Purity',
                           style: tableHeaderStyle,
                           alignment: pw.Alignment.center,
                           backgroundColor: PdfColors.grey200,
@@ -2242,6 +2207,11 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                         children: [
                           tableCell(
                             '${entry.key + 1}',
+                            style: tableStyle,
+                            alignment: pw.Alignment.center,
+                          ),
+                          tableCell(
+                            entry.value.purityController.text.trim(),
                             style: tableStyle,
                             alignment: pw.Alignment.center,
                           ),
@@ -2282,6 +2252,11 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                         ),
                         tableCell(
                           'Total',
+                          style: tableHeaderStyle,
+                          backgroundColor: PdfColors.grey100,
+                        ),
+                        tableCell(
+                          '',
                           style: tableHeaderStyle,
                           backgroundColor: PdfColors.grey100,
                         ),
@@ -2957,7 +2932,7 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back),
         ),
-        title: const Text('Actual PDF Preview'),
+        title: const Text('Order PDF Preview'),
       ),
       body: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
@@ -3463,30 +3438,13 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
                 ],
               ),
               pw.SizedBox(height: 8),
-              pw.Row(
-                children: [
-                  pw.Expanded(
-                    child: pw.Align(
-                      alignment: pw.Alignment.centerLeft,
-                      child: infoCell(
-                        'Delivery Date',
-                        deliveryDate,
-                        centerContent: true,
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(width: 8),
-                  pw.Expanded(
-                    child: pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: infoCell(
-                        'Actual Nett Weight',
-                        '$totalNetWeight gm',
-                        centerContent: true,
-                      ),
-                    ),
-                  ),
-                ],
+              pw.Align(
+                alignment: pw.Alignment.centerLeft,
+                child: infoCell(
+                  'Delivery Date',
+                  deliveryDate,
+                  centerContent: true,
+                ),
               ),
             ],
           );
@@ -3633,6 +3591,7 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
     required this.silverRate,
     required this.subtotal,
     required this.totalGst,
+    required this.overallDiscount,
     required this.grandTotal,
     required this.items,
   });
@@ -3647,6 +3606,7 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
   final double silverRate;
   final double subtotal;
   final double totalGst;
+  final double overallDiscount;
   final double grandTotal;
   final List<_NewItemDraft> items;
 
@@ -3695,9 +3655,32 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
     return total > 0 ? total : 0;
   }
 
-  String _notesFor(_NewItemDraft item) {
+  String _itemNameWithNotes(_NewItemDraft item) {
+    final name = item.nameController.text.trim();
     final notes = item.notesController.text.trim();
-    return notes.isEmpty ? '-' : notes;
+    if (notes.isEmpty) {
+      return name;
+    }
+    return '$name ($notes)';
+  }
+
+  String _makingDisplay(_NewItemDraft item) {
+    switch (item.makingType) {
+      case 'PerGram':
+        return '${_formatCurrency(item.makingCharge)} / gm';
+      case 'TotalMaking':
+        return '${_formatCurrency(item.makingCharge)} T';
+      case 'FixRate':
+        return '${_formatCurrency(item.makingCharge)} FixRate';
+      case 'Percentage':
+        final value = item.makingCharge;
+        final text = value == value.roundToDouble()
+            ? value.toStringAsFixed(0)
+            : value.toStringAsFixed(2);
+        return '$text%';
+      default:
+        return _formatCurrency(item.makingCharge);
+    }
   }
 
   Future<Uint8List> _buildShreeHeaderImage() async {
@@ -3833,22 +3816,11 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
 
     document.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4.landscape,
+        pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(16),
         build: (context) {
-          final preparedDate = DateFormat('dd/MM/yyyy').format(DateTime.now());
           final headingStyle = pw.TextStyle(
             fontSize: 14,
-            fontWeight: pw.FontWeight.bold,
-            color: PdfColors.black,
-          );
-          final labelStyle = pw.TextStyle(
-            fontSize: 8,
-            fontWeight: pw.FontWeight.bold,
-            color: PdfColors.black,
-          );
-          final valueStyle = pw.TextStyle(
-            fontSize: 8.4,
             fontWeight: pw.FontWeight.bold,
             color: PdfColors.black,
           );
@@ -3862,27 +3834,6 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
             color: PdfColors.black,
           );
 
-          pw.Widget infoCell(String label, String value) {
-            return pw.Container(
-              padding: const pw.EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 4,
-              ),
-              decoration: pw.BoxDecoration(
-                border: pw.Border.all(color: PdfColors.grey300),
-                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-              ),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text(label, style: labelStyle),
-                  pw.SizedBox(height: 2),
-                  pw.Text(value, style: valueStyle, maxLines: 1),
-                ],
-              ),
-            );
-          }
-
           pw.Widget tableCell(
             String text, {
             required pw.TextStyle style,
@@ -3890,6 +3841,15 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
             PdfColor? backgroundColor,
             int maxLines = 1,
           }) {
+            final content = text.isEmpty ? ' ' : text;
+            final baseFontSize = style.fontSize ?? 7.5;
+            final scaledFontSize = switch (content.length) {
+              > 42 => (baseFontSize - 2.8).clamp(4.2, baseFontSize),
+              > 30 => (baseFontSize - 2.2).clamp(4.4, baseFontSize),
+              > 22 => (baseFontSize - 1.6).clamp(4.8, baseFontSize),
+              > 14 => (baseFontSize - 1.0).clamp(5.2, baseFontSize),
+              _ => baseFontSize,
+            };
             return pw.Container(
               alignment: alignment,
               color: backgroundColor,
@@ -3898,8 +3858,8 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                 vertical: 4,
               ),
               child: pw.Text(
-                text.isEmpty ? ' ' : text,
-                style: style,
+                content,
+                style: style.copyWith(fontSize: scaledFontSize),
                 maxLines: maxLines,
                 textAlign: alignment == pw.Alignment.center
                     ? pw.TextAlign.center
@@ -3923,88 +3883,21 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                     ),
             ),
             pw.SizedBox(height: 4),
-            pw.Center(
-              child: pw.Text(
-                'Pricing preview for manually added items',
-                style: pw.TextStyle(fontSize: 8.5, color: PdfColors.grey700),
-              ),
-            ),
-            pw.SizedBox(height: 10),
-            pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
-                pw.SizedBox(width: 8),
-                pw.Expanded(child: infoCell('Whatsapp Number', customerMobile)),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('Alternate Mobile', alternateMobile),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
-              ],
-            ),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Expanded(child: infoCell('Prepared On', preparedDate)),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('Items', newItems.length.toString()),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('22K Rate', _formatCurrency(gold22Rate)),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('18K Rate', _formatCurrency(gold18Rate)),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('Silver Rate', _formatCurrency(silverRate)),
-                ),
-              ],
-            ),
-            pw.SizedBox(height: 6),
-            pw.Row(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Expanded(
-                  child: infoCell('Base + Extras', _formatCurrency(subtotal)),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('GST Total', _formatCurrency(totalGst)),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('Grand Total', _formatCurrency(grandTotal)),
-                ),
-                pw.SizedBox(width: 8),
-                pw.Expanded(
-                  child: infoCell('GST Rate', '${gstRate.toStringAsFixed(2)}%'),
-                ),
-              ],
-            ),
             pw.SizedBox(height: 8),
             pw.Table(
               border: pw.TableBorder.all(color: PdfColors.grey400),
               columnWidths: const {
-                0: pw.FixedColumnWidth(24),
-                1: pw.FlexColumnWidth(1.8),
+                0: pw.FixedColumnWidth(32),
+                1: pw.FlexColumnWidth(2.0),
                 2: pw.FixedColumnWidth(40),
-                3: pw.FixedColumnWidth(48),
-                4: pw.FlexColumnWidth(1.6),
-                5: pw.FixedColumnWidth(54),
+                3: pw.FixedColumnWidth(44),
+                4: pw.FixedColumnWidth(40),
+                5: pw.FixedColumnWidth(44),
                 6: pw.FixedColumnWidth(48),
-                7: pw.FixedColumnWidth(44),
-                8: pw.FixedColumnWidth(40),
-                9: pw.FixedColumnWidth(44),
-                10: pw.FixedColumnWidth(44),
-                11: pw.FixedColumnWidth(34),
-                12: pw.FixedColumnWidth(52),
+                7: pw.FixedColumnWidth(66),
+                8: pw.FixedColumnWidth(58),
+                9: pw.FixedColumnWidth(40),
+                10: pw.FixedColumnWidth(52),
               },
               defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
               children: [
@@ -4012,7 +3905,7 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                   decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                   children: [
                     tableCell(
-                      'No.',
+                      'S No',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.center,
@@ -4021,64 +3914,55 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                       'Item Name',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.center,
                       maxLines: 2,
                     ),
                     tableCell(
-                      'Category',
+                      'Purity',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.center,
                       maxLines: 2,
                     ),
                     tableCell(
-                      'Bhav',
+                      'Gross',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      'Notes',
+                      'Less',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
-                      maxLines: 2,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      'Making Type',
+                      'Nett',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
-                      maxLines: 2,
+                      alignment: pw.Alignment.centerRight,
+                    ),
+                    tableCell(
+                      'Rate / gm',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey200,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
                       'Making',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
+                      alignment: pw.Alignment.center,
+                      maxLines: 2,
                     ),
                     tableCell(
-                      'Gross Wt',
+                      'Additionals',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      'Less Wt',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
-                    ),
-                    tableCell(
-                      'Nett Wt',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
-                    ),
-                    tableCell(
-                      'Addl.',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey200,
-                      alignment: pw.Alignment.centerRight,
-                    ),
-                    tableCell(
-                      'GST',
+                      'Others',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey200,
                       alignment: pw.Alignment.center,
@@ -4100,24 +3984,12 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                         alignment: pw.Alignment.center,
                       ),
                       tableCell(
-                        entry.value.nameController.text.trim(),
+                        _itemNameWithNotes(entry.value),
                         style: tableStyle,
                       ),
                       tableCell(
                         _categoryLabel(entry.value.category),
                         style: tableStyle,
-                      ),
-                      tableCell(
-                        _formatCurrency(_bhavFor(entry.value)),
-                        style: tableStyle,
-                        alignment: pw.Alignment.centerRight,
-                      ),
-                      tableCell(_notesFor(entry.value), style: tableStyle),
-                      tableCell(entry.value.makingType, style: tableStyle),
-                      tableCell(
-                        _formatCurrency(entry.value.makingCharge),
-                        style: tableStyle,
-                        alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
                         _formatWeightFixed3(entry.value.grossWeight),
@@ -4135,14 +4007,27 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                         alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
-                        _formatCurrency(entry.value.additionalCharge),
+                        _formatCurrency(_bhavFor(entry.value)),
                         style: tableStyle,
                         alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
-                        entry.value.gstEnabled ? 'Yes' : 'No',
+                        _makingDisplay(entry.value),
                         style: tableStyle,
-                        alignment: pw.Alignment.center,
+                      ),
+                      tableCell(
+                        entry.value.additionalCharge > 0
+                            ? _formatCurrency(entry.value.additionalCharge)
+                            : '-',
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                      tableCell(
+                        _gstAmount(entry.value) > 0
+                            ? _formatCurrency(_gstAmount(entry.value))
+                            : '-',
+                        style: tableStyle,
+                        alignment: pw.Alignment.centerRight,
                       ),
                       tableCell(
                         _formatCurrency(_lineTotal(entry.value)),
@@ -4171,10 +4056,25 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      newItems.length.toString(),
+                      '',
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
-                      alignment: pw.Alignment.center,
+                    ),
+                    tableCell(
+                      '',
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey100,
+                    ),
+                    tableCell(
+                      _formatWeightFixed3(
+                        newItems.fold<double>(
+                          0,
+                          (total, item) => total + item.netWeight,
+                        ),
+                      ),
+                      style: tableHeaderStyle,
+                      backgroundColor: PdfColors.grey100,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
                       '',
@@ -4187,53 +4087,168 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
                       backgroundColor: PdfColors.grey100,
                     ),
                     tableCell(
-                      '',
+                      _formatCurrency(
+                        newItems.fold<double>(
+                          0,
+                          (total, item) => total + item.additionalCharge,
+                        ),
+                      ),
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      '',
+                      _formatCurrency(
+                        newItems.fold<double>(
+                          0,
+                          (total, item) => total + _gstAmount(item),
+                        ),
+                      ),
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
+                      alignment: pw.Alignment.centerRight,
                     ),
                     tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      '',
-                      style: tableHeaderStyle,
-                      backgroundColor: PdfColors.grey100,
-                    ),
-                    tableCell(
-                      _formatCurrency(grandTotal),
+                      _formatCurrency(
+                        newItems.fold<double>(
+                          0,
+                          (total, item) => total + _lineTotal(item),
+                        ),
+                      ),
                       style: tableHeaderStyle,
                       backgroundColor: PdfColors.grey100,
                       alignment: pw.Alignment.centerRight,
                     ),
                   ],
                 ),
-              ],
-            ),
-            pw.SizedBox(height: 8),
-            pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.end,
-              children: [
-                pw.Text(
-                  'Working preview generated from the current draft',
-                  style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-                ),
+                if (overallDiscount > 0)
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey100,
+                    ),
+                    children: [
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        'Overall Discount',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        _formatCurrency(overallDiscount),
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                    ],
+                  ),
+                if (overallDiscount > 0)
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey100,
+                    ),
+                    children: [
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        'Total Due Amount',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        '',
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                      ),
+                      tableCell(
+                        _formatCurrency(grandTotal),
+                        style: tableHeaderStyle,
+                        backgroundColor: PdfColors.grey100,
+                        alignment: pw.Alignment.centerRight,
+                      ),
+                    ],
+                  ),
               ],
             ),
           ];

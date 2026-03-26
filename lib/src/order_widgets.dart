@@ -3,13 +3,15 @@ part of '../main.dart';
 class _OrderCard extends StatelessWidget {
   const _OrderCard({
     required this.order,
-    required this.onEdit,
-    required this.onDelete,
+    this.onView,
+    this.onEdit,
+    this.onDelete,
   });
 
   final Order order;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback? onView;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -67,25 +69,35 @@ class _OrderCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton.filledTonal(
-                        onPressed: onEdit,
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        tooltip: 'Edit',
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        onPressed: onDelete,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Theme.of(
-                            context,
-                          ).colorScheme.errorContainer,
-                          foregroundColor: Theme.of(
-                            context,
-                          ).colorScheme.onErrorContainer,
+                      if (onView != null)
+                        IconButton.filledTonal(
+                          onPressed: onView,
+                          icon: const Icon(Icons.visibility_outlined, size: 18),
+                          tooltip: 'View / Print',
                         ),
-                        icon: const Icon(Icons.delete_outline, size: 18),
-                        tooltip: 'Delete',
-                      ),
+                      if (onEdit != null) ...[
+                        IconButton.filledTonal(
+                          onPressed: onEdit,
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          tooltip: 'Edit',
+                        ),
+                      ],
+                      if (onDelete != null) ...[
+                        if (onEdit != null) const SizedBox(width: 8),
+                        IconButton.filledTonal(
+                          onPressed: onDelete,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.errorContainer,
+                            foregroundColor: Theme.of(
+                              context,
+                            ).colorScheme.onErrorContainer,
+                          ),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          tooltip: 'Delete',
+                        ),
+                      ],
                     ],
                   ),
                 ],

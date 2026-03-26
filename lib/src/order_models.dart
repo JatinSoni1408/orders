@@ -11,6 +11,8 @@ enum AppSection {
   billPreview,
 }
 
+enum AppAccessRole { admin, user }
+
 enum OrderSortOption { newest, oldest, deliverySoonest, deliveryLatest, nameAZ }
 
 enum AdvanceMode { cash, upi, banking, imps, neft, rtgs }
@@ -26,6 +28,7 @@ class Order {
     List<AdvancePayment>? advancePayments,
     List<OldItemReturn>? oldItemReturns,
     List<NewOrderItem>? newItems,
+    List<TakeawayPayment>? takeawayPayments,
     this.customerPhone,
     this.altCustomerPhone,
     this.customerPhotoPath,
@@ -34,9 +37,12 @@ class Order {
     this.estimateMaking,
     this.estimateWeightRange,
     this.deliveryDate,
+    this.newItemsOverallDiscount = 0,
+    this.takeawayDiscount = 0,
   }) : advancePayments = advancePayments ?? const [],
        oldItemReturns = oldItemReturns ?? const [],
-       newItems = newItems ?? const [];
+       newItems = newItems ?? const [],
+       takeawayPayments = takeawayPayments ?? const [];
 
   final String id;
   final String customer;
@@ -47,6 +53,7 @@ class Order {
   final List<AdvancePayment> advancePayments;
   final List<OldItemReturn> oldItemReturns;
   final List<NewOrderItem> newItems;
+  final List<TakeawayPayment> takeawayPayments;
   final String? customerPhone;
   final String? altCustomerPhone;
   final String? customerPhotoPath;
@@ -55,6 +62,8 @@ class Order {
   final double? estimateMaking;
   final String? estimateWeightRange;
   final DateTime? deliveryDate;
+  final double newItemsOverallDiscount;
+  final double takeawayDiscount;
 
   Map<String, dynamic> toJson() {
     return {
@@ -69,6 +78,9 @@ class Order {
           .toList(),
       'oldItemReturns': oldItemReturns.map((item) => item.toJson()).toList(),
       'newItems': newItems.map((item) => item.toJson()).toList(),
+      'takeawayPayments': takeawayPayments
+          .map((payment) => payment.toJson())
+          .toList(),
       'customerPhone': customerPhone,
       'altCustomerPhone': altCustomerPhone,
       'customerPhotoPath': customerPhotoPath,
@@ -77,6 +89,8 @@ class Order {
       'estimateMaking': estimateMaking,
       'estimateWeightRange': estimateWeightRange,
       'deliveryDate': deliveryDate?.toIso8601String(),
+      'newItemsOverallDiscount': newItemsOverallDiscount,
+      'takeawayDiscount': takeawayDiscount,
     };
   }
 
@@ -102,6 +116,12 @@ class Order {
       newItems: (json['newItems'] as List<dynamic>? ?? const [])
           .map((item) => NewOrderItem.fromJson(item as Map<String, dynamic>))
           .toList(),
+      takeawayPayments: (json['takeawayPayments'] as List<dynamic>? ?? const [])
+          .map(
+            (payment) =>
+                TakeawayPayment.fromJson(payment as Map<String, dynamic>),
+          )
+          .toList(),
       customerPhone: json['customerPhone'] as String?,
       altCustomerPhone: json['altCustomerPhone'] as String?,
       customerPhotoPath: json['customerPhotoPath'] as String?,
@@ -110,6 +130,9 @@ class Order {
       estimateMaking: (json['estimateMaking'] as num?)?.toDouble(),
       estimateWeightRange: json['estimateWeightRange'] as String?,
       deliveryDate: _dateTimeFromJson(json['deliveryDate']),
+      newItemsOverallDiscount:
+          (json['newItemsOverallDiscount'] as num?)?.toDouble() ?? 0,
+      takeawayDiscount: (json['takeawayDiscount'] as num?)?.toDouble() ?? 0,
     );
   }
 }
@@ -239,6 +262,37 @@ class AdvancePayment {
   }
 }
 
+class TakeawayPayment {
+  const TakeawayPayment({
+    required this.date,
+    required this.mode,
+    required this.amount,
+  });
+
+  final DateTime date;
+  final AdvanceMode mode;
+  final double amount;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date.toIso8601String(),
+      'mode': mode.name,
+      'amount': amount,
+    };
+  }
+
+  factory TakeawayPayment.fromJson(Map<String, dynamic> json) {
+    return TakeawayPayment(
+      date: _dateTimeFromJson(json['date']) ?? DateTime.now(),
+      mode: AdvanceMode.values.firstWhere(
+        (value) => value.name == ((json['mode'] as String?) ?? ''),
+        orElse: () => AdvanceMode.cash,
+      ),
+      amount: (json['amount'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
 class NewOrderItem {
   const NewOrderItem({
     required this.name,
@@ -250,6 +304,9 @@ class NewOrderItem {
     required this.lessWeight,
     required this.additionalCharge,
     required this.gstEnabled,
+    this.gstLockedOn = false,
+    this.sourceTagId,
+    this.isDifferenceEntry = false,
     this.notes,
   });
 
@@ -262,6 +319,9 @@ class NewOrderItem {
   final double lessWeight;
   final double additionalCharge;
   final bool gstEnabled;
+  final bool gstLockedOn;
+  final String? sourceTagId;
+  final bool isDifferenceEntry;
   final String? notes;
 
   double get netWeight {
@@ -280,6 +340,9 @@ class NewOrderItem {
       'lessWeight': lessWeight,
       'additionalCharge': additionalCharge,
       'gstEnabled': gstEnabled,
+      'gstLockedOn': gstLockedOn,
+      'sourceTagId': sourceTagId,
+      'isDifferenceEntry': isDifferenceEntry,
       'notes': notes,
     };
   }
@@ -295,6 +358,9 @@ class NewOrderItem {
       lessWeight: (json['lessWeight'] as num?)?.toDouble() ?? 0,
       additionalCharge: (json['additionalCharge'] as num?)?.toDouble() ?? 0,
       gstEnabled: json['gstEnabled'] as bool? ?? true,
+      gstLockedOn: json['gstLockedOn'] as bool? ?? false,
+      sourceTagId: json['sourceTagId'] as String?,
+      isDifferenceEntry: json['isDifferenceEntry'] as bool? ?? false,
       notes: json['notes'] as String?,
     );
   }
@@ -518,6 +584,17 @@ extension OrderSortOptionX on OrderSortOption {
         return 'Delivery Late';
       case OrderSortOption.nameAZ:
         return 'Name A-Z';
+    }
+  }
+}
+
+extension AppAccessRoleX on AppAccessRole {
+  String get label {
+    switch (this) {
+      case AppAccessRole.admin:
+        return 'Admin';
+      case AppAccessRole.user:
+        return 'User';
     }
   }
 }
