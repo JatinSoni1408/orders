@@ -4184,19 +4184,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   tooltip: 'Back to orders',
                 )
               : null,
-          title: Row(
-            children: [
-              Image.asset(
-                'assets/logo.png',
-                height: 28,
-                width: 28,
-                fit: BoxFit.contain,
-                color: Theme.of(context).colorScheme.onPrimary,
-              ),
-              const SizedBox(width: 12),
-              Text(appBarTitle),
-            ],
-          ),
+          title: Text(appBarTitle),
           actions: appBarActions,
         ),
         floatingActionButton: _isAdmin && _selectedSection == AppSection.orders
@@ -4251,7 +4239,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       ),
                       NavigationDestination(
                         icon: Icon(Icons.receipt_long_outlined),
-                        label: 'Bill Preview',
+                        label: 'Summary',
                       ),
                     ],
                   ),
