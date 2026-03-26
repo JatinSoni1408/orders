@@ -12,6 +12,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   static const _ordersStorageKey = 'orders_dashboard.orders';
   static const _estimateStorageKey = 'orders_dashboard.estimate';
   static const _authSessionStorageKey = 'orders_dashboard.auth_session';
+  static const _lastEmailStorageKey = 'orders_dashboard.last_email';
   static const _lockedEstimatePurity = '22K';
   static const List<String> _newItemCategoryOptions = [
     'Gold22kt',
@@ -44,6 +45,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     'TotalMaking',
     'FixRate',
   ];
+  static const String _paymentUpiQrBase =
+      'upi://pay?mode=02&pa=Q596211014@ybl&purpose=00&mc=0000&pn=PhonePeMerchant&orgid=180001';
   final List<Order> _orders = [];
   final _FirebaseAuthService _authService = const _FirebaseAuthService();
   final _RatesRepository _ratesRepository = const _RatesRepository();
@@ -114,6 +117,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   bool _isAccessRoleLoading = true;
   bool _isSigningIn = false;
   bool _hideLoginPassword = true;
+  bool _billPreviewGstEnabled = false;
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
@@ -197,6 +201,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   Future<void> _restoreAuthSession() async {
     final prefs = await SharedPreferences.getInstance();
+    final lastEmail = prefs.getString(_lastEmailStorageKey)?.trim() ?? '';
+    if (lastEmail.isNotEmpty) {
+      _loginEmailController.text = lastEmail;
+    }
     final savedSessionJson = prefs.getString(_authSessionStorageKey);
     if (savedSessionJson == null) {
       if (!mounted) {
@@ -215,6 +223,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         jsonDecode(savedSessionJson) as Map<String, dynamic>,
       );
       final refreshed = await _authService.refreshSession(savedSession);
+      await prefs.setString(_lastEmailStorageKey, refreshed.email);
       await prefs.setString(
         _authSessionStorageKey,
         jsonEncode(refreshed.toJson()),
@@ -264,14 +273,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         password: password,
       );
       final prefs = await SharedPreferences.getInstance();
-      if (session.role == AppAccessRole.admin) {
-        await prefs.setString(
-          _authSessionStorageKey,
-          jsonEncode(session.toJson()),
-        );
-      } else {
-        await prefs.remove(_authSessionStorageKey);
-      }
+      await prefs.setString(_lastEmailStorageKey, session.email);
+      await prefs.setString(
+        _authSessionStorageKey,
+        jsonEncode(session.toJson()),
+      );
       if (!mounted) {
         return;
       }
@@ -280,6 +286,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _activeRole = session.role;
         _isSigningIn = false;
         _accessError = null;
+        _loginEmailController.text = session.email;
         _selectedSection = AppSection.orders;
         _selectedStatus = null;
       });
@@ -310,7 +317,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _activeRole = null;
       _accessError = null;
       _isSigningIn = false;
-      _loginEmailController.clear();
       _loginPasswordController.clear();
       _hideLoginPassword = true;
       _selectedSection = AppSection.orders;
@@ -796,34 +802,226 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _newItemsOverallDiscountController.text,
     );
     final capped = requested.clamp(0, _newItemsTotalBeforeDiscount);
-    return capped.toDouble();
+    return _roundCurrency2(capped.toDouble());
   }
 
   double get _newItemsGrandTotal {
     final total = _newItemsTotalBeforeDiscount - _newItemsOverallDiscount;
-    return total > 0 ? total : 0;
+    return total > 0 ? _roundCurrency2(total) : 0;
   }
 
   double get _takeawayDiscount {
     final requested = _parseFormattedDecimal(_takeawayDiscountController.text);
     final capped = requested.clamp(0, _takeawayBalanceAfterPayments);
-    return capped.toDouble();
+    return _roundCurrency2(capped.toDouble());
   }
 
   double get _takeawayBalanceAfterPayments {
     final balance = _newItemsGrandTotal - _takeawayPaymentsTotal;
-    return balance > 0 ? balance : 0;
+    return balance > 0 ? _roundCurrency2(balance) : 0;
   }
 
   double get _takeawayFinalDueAmount {
     final balance = _takeawayBalanceAfterPayments - _takeawayDiscount;
-    return balance > 0 ? balance : 0;
+    return balance > 0 ? _roundCurrency2(balance) : 0;
   }
 
   double get _takeawayRefundAmount {
     final refund =
         _takeawayPaymentsTotal + _takeawayDiscount - _newItemsGrandTotal;
-    return refund > 0 ? refund : 0;
+    return refund > 0 ? _roundCurrency2(refund) : 0;
+  }
+
+  bool get _canApplyBillPreviewGst {
+    return _takeawayRefundAmount <= 0 && _takeawayFinalDueAmount > 0;
+  }
+
+  double get _billPreviewDisplayedDueAmount {
+    if (_takeawayRefundAmount > 0) {
+      return _takeawayRefundAmount;
+    }
+    if (!_billPreviewGstEnabled || !_canApplyBillPreviewGst) {
+      return _takeawayFinalDueAmount;
+    }
+    return _roundCurrency2(_takeawayFinalDueAmount * 1.03);
+  }
+
+  bool get _canGenerateTakeawayPaymentQr {
+    return _takeawayRefundAmount <= 0 && _billPreviewDisplayedDueAmount > 0;
+  }
+
+  String _buildPaymentUpiQr(double amount, String note) {
+    final normalized = amount.toStringAsFixed(2);
+    final encodedNote = Uri.encodeComponent(note);
+    return '$_paymentUpiQrBase&am=$normalized&tn=$encodedNote&cu=INR';
+  }
+
+  List<double> _splitPaymentQrAmounts(double amount) {
+    final chunks = <double>[];
+    double remaining = _roundCurrency2(amount);
+    while (remaining > 100000) {
+      chunks.add(100000);
+      remaining = _roundCurrency2(remaining - 100000);
+    }
+    if (remaining > 0) {
+      chunks.add(remaining);
+    }
+    return chunks;
+  }
+
+  String _paymentQrNote(int splitIndex, int totalSplits) {
+    final customerName = _estimateCustomerNameController.text.trim();
+    final baseNote = customerName.isEmpty
+        ? 'Order payment'
+        : '$customerName order payment';
+    if (totalSplits <= 1) {
+      return baseNote;
+    }
+    return '$baseNote ${splitIndex + 1}/$totalSplits';
+  }
+
+  void _showTakeawayPaymentQrDialog() {
+    if (!_canGenerateTakeawayPaymentQr) {
+      return;
+    }
+    final totalAmount = _billPreviewDisplayedDueAmount;
+    final splitAmounts = _splitPaymentQrAmounts(totalAmount);
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 440,
+              maxHeight: MediaQuery.of(dialogContext).size.height * 0.85,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Generate Payment QR',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Close',
+                      ),
+                    ],
+                  ),
+                  Text(
+                    'Final Due Amount',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatCurrency(totalAmount),
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                  if (splitAmounts.length > 1) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Split into multiple QR codes because UPI supports up to 100000.00 per payment.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        spacing: 12,
+                        runSpacing: 12,
+                        alignment: WrapAlignment.center,
+                        children: List.generate(splitAmounts.length, (index) {
+                          final splitAmount = splitAmounts[index];
+                          final note = _paymentQrNote(index, splitAmounts.length);
+                          return Container(
+                            width: 240,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainerLowest,
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: theme.colorScheme.outlineVariant,
+                              ),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  splitAmounts.length == 1
+                                      ? 'Scan to pay'
+                                      : 'QR ${index + 1}',
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: QrImageView(
+                                    data: _buildPaymentUpiQr(splitAmount, note),
+                                    size: 180,
+                                    backgroundColor: Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Text(
+                                  _formatCurrency(splitAmount),
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SelectableText(
+                    'UPI ID: Q596211014@ybl',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.grey.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    icon: const Icon(Icons.done),
+                    label: const Text('Close'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   List<MapEntry<String, double>> get _newItemsCategoryTotalEntries {
@@ -1680,6 +1878,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _showEstimateMobileError = false;
     _showEstimateAlternateMobileError = false;
     _resetDifferenceNewItem();
+    _billPreviewGstEnabled = false;
     _estimateStatus = OrderStatus.pending;
 
     for (final item in _estimateItems) {
@@ -1736,10 +1935,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerMobileController.text = order.customerPhone ?? '';
     _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
     _newItemsOverallDiscountController.text = order.newItemsOverallDiscount > 0
-        ? _formatIndianNumberInput(order.newItemsOverallDiscount.toString())
+        ? _formatIndianNumberInput(
+            order.newItemsOverallDiscount.toStringAsFixed(2),
+          )
         : '';
     _takeawayDiscountController.text = order.takeawayDiscount > 0
-        ? _formatIndianNumberInput(order.takeawayDiscount.toString())
+        ? _formatIndianNumberInput(order.takeawayDiscount.toStringAsFixed(2))
         : '';
     _showEstimateNameError = false;
     _showEstimateMobileError = false;
@@ -2420,7 +2621,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         ) +
         order.oldItemReturns.fold<double>(
           0,
-          (total, item) => total + item.nettWeight,
+          (total, item) => total + item.advanceWeight,
         );
     final takeawayPaymentsTotal = order.takeawayPayments.fold<double>(
       0,
@@ -3734,7 +3935,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         ) +
         _populatedAdvanceOldItems.fold<double>(
           0,
-          (total, item) => total + item.nettWeight,
+          (total, item) => total + item.advanceWeight,
         );
   }
 
@@ -3815,6 +4016,17 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 setState(() {});
                 _schedulePersistence();
               },
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _canGenerateTakeawayPaymentQr
+                    ? _showTakeawayPaymentQrDialog
+                    : null,
+                icon: const Icon(Icons.qr_code_2_outlined),
+                label: const Text('Generate Payment QR'),
+              ),
             ),
           ],
         ),
@@ -3901,6 +4113,18 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     ),
                   ),
                   const SizedBox(width: 12),
+                  ChoiceChip(
+                    label: const Text('G%'),
+                    selected: _billPreviewGstEnabled && _canApplyBillPreviewGst,
+                    onSelected: _canApplyBillPreviewGst
+                        ? (value) {
+                            setState(() {
+                              _billPreviewGstEnabled = value;
+                            });
+                          }
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -3915,11 +4139,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          _formatCurrency(
-                            _takeawayRefundAmount > 0
-                                ? _takeawayRefundAmount
-                                : _takeawayFinalDueAmount,
-                          ),
+                          _formatCurrency(_billPreviewDisplayedDueAmount),
                           style: Theme.of(context).textTheme.titleMedium
                               ?.copyWith(
                                 fontWeight: FontWeight.w700,
@@ -3998,7 +4218,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       ),
                       const SizedBox(height: 12),
                       Text(
-                        'Admin session stays signed in on relaunch. User session opens the sign-in page next time.',
+                        'The app reopens with the last signed-in account, and the last used email stays filled in.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey.shade700,
                         ),
@@ -6008,6 +6228,18 @@ class _AdvanceOldItemDraft {
   double get tanch => double.tryParse(tanchController.text.trim()) ?? 0;
 
   double get amount => nettWeight * tanch * returnRate;
+
+  double get advanceEffectiveRate {
+    return advanceRate + ((advanceRate * advanceMaking) / 100);
+  }
+
+  double get advanceWeight {
+    final effectiveRate = advanceEffectiveRate;
+    if (effectiveRate <= 0) {
+      return 0;
+    }
+    return amount / effectiveRate;
+  }
 
   bool get isEmpty =>
       itemNameController.text.trim().isEmpty &&

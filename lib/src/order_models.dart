@@ -454,6 +454,18 @@ class OldItemReturn {
 
   double get amount => nettWeight * tanch * returnRate;
 
+  double get advanceEffectiveRate {
+    return advanceRate + ((advanceRate * advanceMaking) / 100);
+  }
+
+  double get advanceWeight {
+    final effectiveRate = advanceEffectiveRate;
+    if (effectiveRate <= 0) {
+      return 0;
+    }
+    return amount / effectiveRate;
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'date': date.toIso8601String(),

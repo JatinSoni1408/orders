@@ -24,6 +24,10 @@ String _formatCurrency(double value) {
   return formatter.format(value);
 }
 
+double _roundCurrency2(double value) {
+  return (value * 100).roundToDouble() / 100;
+}
+
 String _sanitizeDecimalInput(String value) {
   final buffer = StringBuffer();
   var hasDecimal = false;

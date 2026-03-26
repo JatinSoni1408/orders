@@ -312,7 +312,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
 
     final textPainter = TextPainter(
       text: const TextSpan(
-        text: 'Shree:',
+        text: 'श्री',
         style: TextStyle(
           color: Colors.black,
           fontSize: 28,
@@ -399,6 +399,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
 
   Future<Uint8List> _buildCombinedBillPdf(PdfPageFormat format) async {
     final document = pw.Document();
+    final emojiFont = await PdfGoogleFonts.notoColorEmoji();
     pw.MemoryImage? shreeHeaderImage;
     try {
       final shreeHeaderBytes = await _buildShreeHeaderImage().timeout(
@@ -409,6 +410,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
       }
     } catch (_) {
       shreeHeaderImage = null;
+    }
+
+    String truncatedWeightText(double value) {
+      final truncated = value >= 0
+          ? (value * 1000).floorToDouble() / 1000
+          : (value * 1000).ceilToDouble() / 1000;
+      return NumberFormat('0.000', 'en_IN').format(truncated);
     }
 
     final estimateList = estimateItems.where((item) => !item.isEmpty).toList();
@@ -431,7 +439,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
               amount: _formatCurrency(item.amount),
               rate: _advanceRateLabel(item.rate),
               making: '${item.rateMaking.toStringAsFixed(2)}%',
-              netWeight: _formatWeightFixed3(item.weight),
+              netWeight: truncatedWeightText(item.weight),
             ),
           ),
           ...oldItemList.map(
@@ -443,7 +451,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
               making: item.advanceMaking > 0
                   ? '${item.advanceMaking.toStringAsFixed(2)}%'
                   : '-',
-              netWeight: _formatWeightFixed3(item.nettWeight),
+              netWeight: truncatedWeightText(item.advanceWeight),
             ),
           ),
         ]
@@ -454,7 +462,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
         advanceList.fold<double>(0, (total, item) => total + item.weight) +
         oldItemList.fold<double>(
           0,
-          (total, item) => total + item.nettWeight,
+          (total, item) => total + item.advanceWeight,
         );
     final takeawayList = takeawayPayments
         .where((item) => !item.isEmpty)
@@ -503,22 +511,30 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             color: PdfColors.black,
           );
 
-          pw.Widget infoCell(String label, String value) {
+          pw.Widget summaryMetaCell(String iconGlyph, String value) {
             return pw.Container(
               padding: const pw.EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 4,
+                horizontal: 8,
+                vertical: 6,
               ),
               decoration: pw.BoxDecoration(
                 border: pw.Border.all(color: PdfColors.grey300),
-                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
               ),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
                 children: [
-                  pw.Text(label, style: labelStyle),
-                  pw.SizedBox(height: 2),
-                  pw.Text(value, style: valueStyle, maxLines: 1),
+                  pw.Text(
+                    iconGlyph,
+                    style: pw.TextStyle(
+                      fontFallback: [emojiFont],
+                      fontSize: 12,
+                    ),
+                  ),
+                  pw.SizedBox(width: 6),
+                  pw.Expanded(
+                    child: pw.Text(value, style: valueStyle, maxLines: 1),
+                  ),
                 ],
               ),
             );
@@ -950,7 +966,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                   pw.SizedBox(height: 2),
                 if (combinedAdvanceRows.isNotEmpty)
                   pw.Text(
-                    'Net Wt ${_formatWeight3(combinedAdvanceTotalNetWeight)} gm',
+                    'Net Wt ${truncatedWeightText(combinedAdvanceTotalNetWeight)} gm',
                     style: subheadingStyle,
                   ),
                 if (combinedAdvanceRows.isNotEmpty)
@@ -1074,7 +1090,9 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             backgroundColor: PdfColors.grey100,
                           ),
                           tableCell(
-                            _formatWeightFixed3(combinedAdvanceTotalNetWeight),
+                            truncatedWeightText(
+                              combinedAdvanceTotalNetWeight,
+                            ),
                             style: tableHeaderStyle,
                             alignment: pw.Alignment.centerRight,
                             backgroundColor: PdfColors.grey100,
@@ -1343,6 +1361,11 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
           pw.Widget takeawaySummaryTable() {
             final takeawayRefundAmount =
                 takeawayPaymentsTotal + takeawayDiscount - newItemsGrandTotal;
+            final takeawayStatusLabel = takeawayRefundAmount > 0
+                ? 'Refund Amount'
+                : takeawayFinalDueAmount == 0
+                ? 'Transaction Settled'
+                : 'Final Due Amount';
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -1474,9 +1497,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                   children: [
                     pw.Expanded(
                       child: pw.Text(
-                        takeawayRefundAmount > 0
-                            ? 'How Much To Refund'
-                            : 'Final Due Amount',
+                        takeawayStatusLabel,
                         style: labelStyle,
                       ),
                     ),
@@ -1510,13 +1531,18 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             pw.Row(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Expanded(flex: 2, child: infoCell('Name', customerName)),
-                pw.SizedBox(width: 6),
                 pw.Expanded(
-                  child: infoCell('Whatsapp Number', customerMobile),
+                  flex: 2,
+                  child: summaryMetaCell('👤', customerName),
                 ),
                 pw.SizedBox(width: 6),
-                pw.Expanded(child: infoCell('Delivery Date', deliveryDate)),
+                pw.Expanded(
+                  child: summaryMetaCell('📞', customerMobile),
+                ),
+                pw.SizedBox(width: 6),
+                pw.Expanded(
+                  child: summaryMetaCell('⏰', deliveryDate),
+                ),
               ],
             ),
             pw.SizedBox(height: 10),
@@ -1545,14 +1571,6 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       ),
                     ),
                   ],
-                  pw.SizedBox(height: 6),
-                  pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text(
-                      'Total Due Amount ${_formatCurrency(newItemsGrandTotal)}',
-                      style: valueStyle,
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -2523,17 +2541,6 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
 
   Future<Uint8List> _buildAdvancePdf(PdfPageFormat format) async {
     final document = pw.Document();
-    double oldItemAdvanceEffectiveRate(_AdvanceOldItemDraft item) {
-      return item.advanceRate + ((item.advanceRate * item.advanceMaking) / 100);
-    }
-
-    double oldItemAdvanceWeight(_AdvanceOldItemDraft item) {
-      final effectiveRate = oldItemAdvanceEffectiveRate(item);
-      if (effectiveRate <= 0) {
-        return 0;
-      }
-      return item.amount / effectiveRate;
-    }
 
     String formatAdvanceAmount(double value) {
       return NumberFormat.currency(
@@ -2575,7 +2582,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
     );
     final oldItemsAdvanceTotalNetWeight = oldItemLines.fold<double>(
       0,
-      (total, item) => total + oldItemAdvanceWeight(item),
+      (total, item) => total + item.advanceWeight,
     );
     final combinedAdvanceTotalAmount = totalAmount + oldItemsTotalAmount;
     final combinedAdvanceTotalNetWeight =
@@ -2610,7 +2617,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 making: item.advanceMaking > 0
                     ? '${item.advanceMaking.toStringAsFixed(2)}%'
                     : '-',
-                netWeight: formatAdvanceWeight3(oldItemAdvanceWeight(item)),
+                netWeight: formatAdvanceWeight3(item.advanceWeight),
               ),
             ),
           ]
@@ -2831,17 +2838,17 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                             scaleDown: true,
                           ),
                           tableCell(
-                            _formatWeight3(item.grossWeight),
+                            formatAdvanceWeight3(item.grossWeight),
                             alignment: pw.Alignment.centerRight,
                             scaleDown: true,
                           ),
                           tableCell(
-                            _formatWeight3(item.lessWeight),
+                            formatAdvanceWeight3(item.lessWeight),
                             alignment: pw.Alignment.centerRight,
                             scaleDown: true,
                           ),
                           tableCell(
-                            _formatWeight3(item.nettWeight),
+                            formatAdvanceWeight3(item.nettWeight),
                             alignment: pw.Alignment.centerRight,
                             scaleDown: true,
                           ),
