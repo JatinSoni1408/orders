@@ -118,6 +118,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   bool _isSigningIn = false;
   bool _hideLoginPassword = true;
   bool _billPreviewGstEnabled = false;
+  double _billPreviewLockedGstAddedAmount = 0;
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
   DateTime _estimateDeliveryDate = DateTime.now();
@@ -821,29 +822,65 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return balance > 0 ? _roundCurrency2(balance) : 0;
   }
 
-  double get _takeawayFinalDueAmount {
+  double get _takeawayBaseFinalDueAmount {
     final balance = _takeawayBalanceAfterPayments - _takeawayDiscount;
     return balance > 0 ? _roundCurrency2(balance) : 0;
   }
 
-  double get _takeawayRefundAmount {
+  double get _takeawayPreGstRefundAmount {
     final refund =
         _takeawayPaymentsTotal + _takeawayDiscount - _newItemsGrandTotal;
     return refund > 0 ? _roundCurrency2(refund) : 0;
   }
 
+  double get _takeawayGstAddedAmount {
+    if (!_billPreviewGstEnabled) {
+      return 0;
+    }
+    return _billPreviewLockedGstAddedAmount;
+  }
+
+  double get _takeawaySettlementTargetAmount {
+    final target =
+        _newItemsGrandTotal - _takeawayDiscount + _takeawayGstAddedAmount;
+    return target > 0 ? _roundCurrency2(target) : 0;
+  }
+
+  double get _takeawayFinalDueAmount {
+    final due = _takeawaySettlementTargetAmount - _takeawayPaymentsTotal;
+    return due > 0 ? _roundCurrency2(due) : 0;
+  }
+
+  double get _takeawayRefundAmount {
+    final refund = _takeawayPaymentsTotal - _takeawaySettlementTargetAmount;
+    return refund > 0 ? _roundCurrency2(refund) : 0;
+  }
+
   bool get _canApplyBillPreviewGst {
-    return _takeawayRefundAmount <= 0 && _takeawayFinalDueAmount > 0;
+    return _billPreviewGstEnabled ||
+        (_takeawayPreGstRefundAmount <= 0 && _takeawayBaseFinalDueAmount > 0);
   }
 
   double get _billPreviewDisplayedDueAmount {
     if (_takeawayRefundAmount > 0) {
       return _takeawayRefundAmount;
     }
-    if (!_billPreviewGstEnabled || !_canApplyBillPreviewGst) {
-      return _takeawayFinalDueAmount;
+    return _takeawayFinalDueAmount;
+  }
+
+  void _setBillPreviewGstEnabled(bool value) {
+    if (value) {
+      if (!_canApplyBillPreviewGst || _billPreviewGstEnabled) {
+        return;
+      }
+      _billPreviewLockedGstAddedAmount = _roundCurrency2(
+        _takeawayBaseFinalDueAmount * 0.03,
+      );
+      _billPreviewGstEnabled = _billPreviewLockedGstAddedAmount > 0;
+      return;
     }
-    return _roundCurrency2(_takeawayFinalDueAmount * 1.03);
+    _billPreviewGstEnabled = false;
+    _billPreviewLockedGstAddedAmount = 0;
   }
 
   bool get _canGenerateTakeawayPaymentQr {
@@ -891,7 +928,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       builder: (dialogContext) {
         final theme = Theme.of(dialogContext);
         return Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: 440,
@@ -952,7 +992,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                         alignment: WrapAlignment.center,
                         children: List.generate(splitAmounts.length, (index) {
                           final splitAmount = splitAmounts[index];
-                          final note = _paymentQrNote(index, splitAmounts.length);
+                          final note = _paymentQrNote(
+                            index,
+                            splitAmounts.length,
+                          );
                           return Container(
                             width: 240,
                             padding: const EdgeInsets.all(14),
@@ -1224,6 +1267,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       'newItemsSilverRate': _newItemsSilverRateController.text,
       'newItemsOverallDiscount': _newItemsOverallDiscountController.text,
       'takeawayDiscount': _takeawayDiscountController.text,
+      'billPreviewGstEnabled': _billPreviewGstEnabled,
+      'billPreviewLockedGstAddedAmount': _billPreviewLockedGstAddedAmount,
       'newItems': _newItems.map((item) => item.toJson()).toList(),
       'differenceNewItem': _differenceNewItem.toJson(),
       'editingOrderId': _editingOrderId,
@@ -1685,6 +1730,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         decodedEstimate['newItemsOverallDiscount'] as String? ?? '';
     _takeawayDiscountController.text =
         decodedEstimate['takeawayDiscount'] as String? ?? '';
+    _billPreviewGstEnabled =
+        decodedEstimate['billPreviewGstEnabled'] as bool? ?? false;
+    _billPreviewLockedGstAddedAmount =
+        (decodedEstimate['billPreviewLockedGstAddedAmount'] as num?)
+            ?.toDouble() ??
+        0;
+    if (_billPreviewGstEnabled && _billPreviewLockedGstAddedAmount <= 0) {
+      _billPreviewGstEnabled = false;
+    }
     _estimateStatus = _orderStatusFromName(
       decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
     );
@@ -1879,6 +1933,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _showEstimateAlternateMobileError = false;
     _resetDifferenceNewItem();
     _billPreviewGstEnabled = false;
+    _billPreviewLockedGstAddedAmount = 0;
     _estimateStatus = OrderStatus.pending;
 
     for (final item in _estimateItems) {
@@ -1947,6 +2002,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _showEstimateAlternateMobileError = false;
     _estimateStatus = order.status;
     _resetDifferenceNewItem();
+    _billPreviewGstEnabled = false;
+    _billPreviewLockedGstAddedAmount = 0;
 
     for (final item in _estimateItems) {
       item.dispose();
@@ -2480,6 +2537,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       takeawayPaymentsTotal: _takeawayPaymentsTotal,
       takeawayBalanceAfterPayments: _takeawayBalanceAfterPayments,
       takeawayDiscount: _takeawayDiscount,
+      takeawayGstAddedAmount: _takeawayGstAddedAmount,
+      takeawayRefundAmount: _takeawayRefundAmount,
       takeawayFinalDueAmount: _takeawayFinalDueAmount,
       balanceAfterAdvance: _billPreviewBalanceAfterAdvance,
       gold22Rate: _newItemRateForCategory('Gold22kt'),
@@ -2614,15 +2673,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       0,
       (total, item) => total + item.amount,
     );
-    final advanceNetWeight =
-        order.advancePayments.fold<double>(
-          0,
-          (total, payment) => total + payment.weight,
-        ) +
-        order.oldItemReturns.fold<double>(
-          0,
-          (total, item) => total + item.advanceWeight,
-        );
+    final advanceNetWeight = _truncateWeight3(
+      order.advancePayments.fold<double>(
+            0,
+            (sum, payment) => sum + _truncateWeight3(payment.weight),
+          ) +
+          order.oldItemReturns.fold<double>(
+            0,
+            (sum, item) => sum + _truncateWeight3(item.advanceWeight),
+          ),
+    );
     final takeawayPaymentsTotal = order.takeawayPayments.fold<double>(
       0,
       (total, payment) => total + payment.amount,
@@ -2633,6 +2693,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     final takeawayDiscount = order.takeawayDiscount;
     final takeawayFinalDueAmount =
         (takeawayBalanceAfterPayments - takeawayDiscount)
+            .clamp(0, double.infinity)
+            .toDouble();
+    final takeawayRefundAmount =
+        (takeawayPaymentsTotal + takeawayDiscount - order.total)
             .clamp(0, double.infinity)
             .toDouble();
 
@@ -2669,6 +2733,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       takeawayPaymentsTotal: takeawayPaymentsTotal,
       takeawayBalanceAfterPayments: takeawayBalanceAfterPayments,
       takeawayDiscount: takeawayDiscount,
+      takeawayGstAddedAmount: 0,
+      takeawayRefundAmount: takeawayRefundAmount,
       takeawayFinalDueAmount: takeawayFinalDueAmount,
       balanceAfterAdvance:
           order.total - (advanceTotalAmount + advanceOldItemsTotalAmount),
@@ -3929,14 +3995,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   double get _billPreviewAdvanceNetWeight {
-    return _populatedAdvanceItems.fold<double>(
+    final total =
+        _populatedAdvanceItems.fold<double>(
           0,
-          (total, item) => total + item.weight,
+          (sum, item) => sum + _truncateWeight3(item.weight),
         ) +
         _populatedAdvanceOldItems.fold<double>(
           0,
-          (total, item) => total + item.advanceWeight,
+          (sum, item) => sum + _truncateWeight3(item.advanceWeight),
         );
+    return _truncateWeight3(total);
   }
 
   Widget _buildTakeawaySummaryCard() {
@@ -4016,6 +4084,37 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 setState(() {});
                 _schedulePersistence();
               },
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  _EstimateSummaryRow(
+                    label: 'Final Due Before G%',
+                    value: _formatCurrency(_takeawayBaseFinalDueAmount),
+                  ),
+                  if (_takeawayGstAddedAmount > 0) ...[
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'G% Added',
+                      value: _formatCurrency(_takeawayGstAddedAmount),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  _EstimateSummaryRow(
+                    label: _takeawayRefundAmount > 0
+                        ? 'Refund Amount'
+                        : 'Final Due Amount',
+                    value: _formatCurrency(_billPreviewDisplayedDueAmount),
+                    emphasize: true,
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 12),
             Align(
@@ -4115,12 +4214,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   const SizedBox(width: 12),
                   ChoiceChip(
                     label: const Text('G%'),
-                    selected: _billPreviewGstEnabled && _canApplyBillPreviewGst,
+                    selected: _billPreviewGstEnabled,
                     onSelected: _canApplyBillPreviewGst
                         ? (value) {
                             setState(() {
-                              _billPreviewGstEnabled = value;
+                              _setBillPreviewGstEnabled(value);
                             });
+                            _schedulePersistence();
                           }
                         : null,
                   ),
@@ -4137,6 +4237,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                               ?.copyWith(color: Colors.grey.shade700),
                           textAlign: TextAlign.right,
                         ),
+                        if (_takeawayGstAddedAmount > 0) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'G% Added ${_formatCurrency(_takeawayGstAddedAmount)}',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: Colors.grey.shade700),
+                            textAlign: TextAlign.right,
+                          ),
+                        ],
                         const SizedBox(height: 2),
                         Text(
                           _formatCurrency(_billPreviewDisplayedDueAmount),
@@ -6391,7 +6500,9 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                         .map(
                           (value) => DropdownMenuItem(
                             value: value,
-                            child: Text(value),
+                            child: Text(
+                              _formatTanchPercent(double.tryParse(value) ?? 0),
+                            ),
                           ),
                         )
                         .toList(),

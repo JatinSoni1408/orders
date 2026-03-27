@@ -14,6 +14,17 @@ String _formatWeightFixed3(double value) {
   return formatter.format(value);
 }
 
+double _truncateWeight3(double value) {
+  return value >= 0
+      ? (value * 1000).floorToDouble() / 1000
+      : (value * 1000).ceilToDouble() / 1000;
+}
+
+String _formatTanchPercent(double value) {
+  final formatter = NumberFormat('0.###', 'en_IN');
+  return '${formatter.format(value * 100)}%';
+}
+
 String _formatCurrency(double value) {
   final formatter = NumberFormat.currency(
     locale: 'en_IN',
