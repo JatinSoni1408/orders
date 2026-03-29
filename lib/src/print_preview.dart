@@ -420,6 +420,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
       return NumberFormat('0.000', 'en_IN').format(_truncateWeight3(value));
     }
 
+    String formattedRateWithMaking(double value) {
+      return value <= 0
+          ? '-Unfix-'
+          : NumberFormat('0.000', 'en_IN').format(value);
+    }
+
     final estimateList = estimateItems.where((item) => !item.isEmpty).toList();
     final advanceList = advanceItems.where((item) => !item.isEmpty).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -439,6 +445,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
               String amount,
               String rate,
               String making,
+              String rateWithMaking,
               String netWeight,
             })
           >[
@@ -449,6 +456,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 amount: _formatCurrency(item.amount),
                 rate: _advanceRateLabel(item.rate),
                 making: '${item.rateMaking.toStringAsFixed(2)}%',
+                rateWithMaking: formattedRateWithMaking(item.effectiveRate),
                 netWeight: truncatedWeightText(item.weight),
               ),
             ),
@@ -461,6 +469,9 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 making: item.advanceMaking > 0
                     ? '${item.advanceMaking.toStringAsFixed(2)}%'
                     : '-',
+                rateWithMaking: formattedRateWithMaking(
+                  item.advanceEffectiveRate,
+                ),
                 netWeight: truncatedWeightText(item.advanceWeight),
               ),
             ),
@@ -949,11 +960,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                     border: pw.TableBorder.all(color: PdfColors.grey400),
                     columnWidths: const {
                       0: pw.FixedColumnWidth(34),
-                      1: pw.FixedColumnWidth(82),
-                      2: pw.FixedColumnWidth(42),
-                      3: pw.FixedColumnWidth(58),
-                      4: pw.FixedColumnWidth(42),
-                      5: pw.FixedColumnWidth(38),
+                      1: pw.FixedColumnWidth(74),
+                      2: pw.FixedColumnWidth(58),
+                      3: pw.FixedColumnWidth(50),
+                      4: pw.FixedColumnWidth(34),
+                      5: pw.FixedColumnWidth(52),
+                      6: pw.FixedColumnWidth(38),
                     },
                     children: [
                       pw.TableRow(
@@ -990,6 +1002,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             alignment: pw.Alignment.centerRight,
                           ),
                           tableCell(
+                            'Rate + Making',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                            scaleDown: true,
+                          ),
+                          tableCell(
                             'Net Wt',
                             style: tableHeaderStyle,
                             backgroundColor: PdfColors.grey200,
@@ -1021,6 +1040,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                               alignment: pw.Alignment.centerRight,
                             ),
                             tableCell(
+                              entry.rateWithMaking,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                              scaleDown: true,
+                            ),
+                            tableCell(
                               entry.netWeight,
                               style: tableStyle,
                               alignment: pw.Alignment.centerRight,
@@ -1047,6 +1072,11 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             _formatCurrency(combinedAdvanceTotalAmount),
                             style: tableHeaderStyle,
                             alignment: pw.Alignment.centerRight,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
                             backgroundColor: PdfColors.grey100,
                           ),
                           tableCell(
@@ -1612,9 +1642,6 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
     required this.gst,
     required this.totalQuantity,
     required this.totalWeight,
-    required this.gold22Rate,
-    required this.gold18Rate,
-    required this.silverRate,
     required this.items,
   });
 
@@ -1628,23 +1655,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
   final String gst;
   final String totalQuantity;
   final String totalWeight;
-  final double gold22Rate;
-  final double gold18Rate;
-  final double silverRate;
   final List<_EstimateItemDraft> items;
-
-  double _estimateRateForPurity(String selectedPurity) {
-    switch (selectedPurity.trim()) {
-      case '22K':
-        return gold22Rate;
-      case '18K':
-        return gold18Rate;
-      case 'Silver':
-        return silverRate;
-      default:
-        return 0;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1759,6 +1770,11 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         letterSpacing: 0.4,
         color: PdfColors.black,
       );
+
+      String truncatedEstimatedWeightText(double value) {
+        return _formatWeightFixed3(_truncateWeight3(value));
+      }
+
       double dynamicColumnWidth(
         String header,
         Iterable<String> values, {
@@ -1799,7 +1815,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
       );
       final estimatedWeightColumnWidth = dynamicColumnWidth(
         'EWt / gm',
-        items.map((item) => _formatWeight3(item.estimatedWeight)),
+        items.map((item) => truncatedEstimatedWeightText(item.estimatedWeight)),
         minWidth: 36,
         maxWidth: 50,
       );
@@ -2099,14 +2115,6 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                     pw.Expanded(
                       child: infoCell('GST', gst, centerContent: true),
                     ),
-                    pw.SizedBox(width: 8),
-                    pw.Expanded(
-                      child: infoCell(
-                        'Rate',
-                        _formatCurrency(_estimateRateForPurity(purity)),
-                        centerContent: true,
-                      ),
-                    ),
                   ],
                 ),
                 pw.SizedBox(height: 8),
@@ -2189,7 +2197,9 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                             alignment: pw.Alignment.center,
                           ),
                           tableCell(
-                            _formatWeight3(entry.value.estimatedWeight),
+                            truncatedEstimatedWeightText(
+                              entry.value.estimatedWeight,
+                            ),
                             style: tableStyle,
                             alignment: pw.Alignment.centerRight,
                           ),
@@ -2231,7 +2241,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                           backgroundColor: PdfColors.grey100,
                         ),
                         tableCell(
-                          _formatWeight3(
+                          truncatedEstimatedWeightText(
                             items.fold<double>(
                               0,
                               (total, item) => total + item.estimatedWeight,
@@ -2510,6 +2520,12 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
       return NumberFormat('0.000', 'en_IN').format(_truncateWeight3(value));
     }
 
+    String formatAdvanceRateWithMaking(double value) {
+      return value <= 0
+          ? '-Unfix-'
+          : NumberFormat('0.000', 'en_IN').format(value);
+    }
+
     final sortedAdvanceItems = items.where((item) => !item.isEmpty).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
     final lines = sortedAdvanceItems.map((item) => item.line).toList();
@@ -2539,6 +2555,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
               String amount,
               String rate,
               String making,
+              String rateWithMaking,
               String netWeight,
             })
           >[
@@ -2549,6 +2566,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 amount: formatAdvanceAmount(line.amount),
                 rate: formatAdvanceRate(line.rate),
                 making: '${line.rateMaking.toStringAsFixed(2)}%',
+                rateWithMaking: formatAdvanceRateWithMaking(line.effectiveRate),
                 netWeight: formatAdvanceWeight3(line.weight),
               ),
             ),
@@ -2561,6 +2579,9 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 making: item.advanceMaking > 0
                     ? '${item.advanceMaking.toStringAsFixed(2)}%'
                     : '-',
+                rateWithMaking: formatAdvanceRateWithMaking(
+                  item.advanceEffectiveRate,
+                ),
                 netWeight: formatAdvanceWeight3(item.advanceWeight),
               ),
             ),
@@ -2633,11 +2654,12 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 border: pw.TableBorder.all(color: PdfColors.grey400),
                 columnWidths: const {
                   0: pw.FixedColumnWidth(38),
-                  1: pw.FixedColumnWidth(86),
-                  2: pw.FixedColumnWidth(48),
-                  3: pw.FixedColumnWidth(60),
-                  4: pw.FixedColumnWidth(40),
-                  5: pw.FixedColumnWidth(40),
+                  1: pw.FixedColumnWidth(76),
+                  2: pw.FixedColumnWidth(60),
+                  3: pw.FixedColumnWidth(50),
+                  4: pw.FixedColumnWidth(34),
+                  5: pw.FixedColumnWidth(50),
+                  6: pw.FixedColumnWidth(40),
                 },
                 children: [
                   pw.TableRow(
@@ -2658,6 +2680,13 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                         'Making%',
                         isHeader: true,
                         alignment: pw.Alignment.centerRight,
+                        scaleDown: true,
+                      ),
+                      tableCell(
+                        'Rate + Making',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                        scaleDown: true,
                       ),
                       tableCell(
                         'Net Wt',
@@ -2684,6 +2713,11 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                           alignment: pw.Alignment.centerRight,
                         ),
                         tableCell(
+                          entry.rateWithMaking,
+                          alignment: pw.Alignment.centerRight,
+                          scaleDown: true,
+                        ),
+                        tableCell(
                           entry.netWeight,
                           alignment: pw.Alignment.centerRight,
                         ),
@@ -2699,6 +2733,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                         isHeader: true,
                         alignment: pw.Alignment.centerRight,
                       ),
+                      tableCell(''),
                       tableCell(''),
                       tableCell(''),
                       tableCell(

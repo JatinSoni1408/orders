@@ -1,16 +1,14 @@
 # orders
 
-A new Flutter project.
+Flutter order-management app with platform-specific access:
 
-## Getting Started
+- Windows: admin app for creating, editing, syncing, and printing orders.
+- Android and iOS: user app for viewing and printing saved orders.
 
-This project is a starting point for a Flutter application.
+## Windows build
 
-A few resources to get you started if this is your first Flutter project:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tool\package_windows_release.ps1
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The packaged desktop app is created in `dist\windows\orders`.

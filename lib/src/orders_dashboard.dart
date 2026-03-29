@@ -9,11 +9,13 @@ class OrdersDashboard extends StatefulWidget {
 
 class _OrdersDashboardState extends State<OrdersDashboard>
     with WidgetsBindingObserver {
+  static const Duration _remoteRefreshInterval = Duration(seconds: 5);
   static const _ordersStorageKey = 'orders_dashboard.orders';
   static const _estimateStorageKey = 'orders_dashboard.estimate';
   static const _authSessionStorageKey = 'orders_dashboard.auth_session';
   static const _lastEmailStorageKey = 'orders_dashboard.last_email';
   static const _lockedEstimatePurity = '22K';
+  static const _defaultEstimateWeightRange = '0';
   static const List<String> _newItemCategoryOptions = [
     'Gold22kt',
     'Gold18kt',
@@ -68,7 +70,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     text: '15',
   );
   final TextEditingController _estimateWeightRangeController =
-      TextEditingController();
+      TextEditingController(text: _defaultEstimateWeightRange);
   final TextEditingController _estimateCustomerNameController =
       TextEditingController();
   final TextEditingController _estimateCustomerMobileController =
@@ -108,6 +110,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   Timer? _estimateClockTimer;
   Timer? _persistDebounceTimer;
   Timer? _firestoreSyncDebounceTimer;
+  Timer? _remoteRefreshTimer;
   bool _showEstimateNameError = false;
   bool _showEstimateMobileError = false;
   bool _showEstimateAlternateMobileError = false;
@@ -134,12 +137,54 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   String? _accessError;
   String? _lastSyncedOrdersJson;
   String? _lastSyncedDraftJson;
+  DateTime? _lastLocalSavedAt;
+  DateTime? _lastRemoteSyncedAt;
+  bool _isRemoteSyncInProgress = false;
+  bool _hasRemoteSyncError = false;
+  bool _isRemoteRefreshInProgress = false;
 
   bool get _showsLiveEstimateClock =>
       _selectedSection == AppSection.estimateCalculator ||
       _selectedSection == AppSection.actual;
   bool get _isAdmin => _activeRole == AppAccessRole.admin;
   bool get _isUser => _activeRole == AppAccessRole.user;
+  bool get _showAdminEditNavigation => _isAdmin && _isEditingEstimate;
+  AppAccessRole? get _platformRequiredRole => _requiredAccessRoleForPlatform;
+
+  bool _isRoleAllowedOnThisPlatform(AppAccessRole role) {
+    final requiredRole = _platformRequiredRole;
+    return requiredRole == null || requiredRole == role;
+  }
+
+  String get _accessGateTitle {
+    return switch (_platformRequiredRole) {
+      AppAccessRole.admin => 'Admin Sign In',
+      AppAccessRole.user => 'User Sign In',
+      null => 'Sign In',
+    };
+  }
+
+  String get _accessGateDescription {
+    return switch (_platformRequiredRole) {
+      AppAccessRole.admin =>
+        'This Windows build is the admin app. Sign in with an admin account to manage, edit, and print orders.',
+      AppAccessRole.user =>
+        'This Android and iOS build is for user accounts. Sign in with a user account to view and print saved orders.',
+      null =>
+        'Use your Firebase account to continue. Admin gets full access, and user accounts can view and print saved orders only.',
+    };
+  }
+
+  String _platformRoleMismatchMessage() {
+    final requiredRole = _platformRequiredRole;
+    if (requiredRole == null) {
+      return 'This account is not allowed on this device.';
+    }
+    if (requiredRole == AppAccessRole.admin) {
+      return 'This Windows build only allows admin accounts. Sign in with an admin account.';
+    }
+    return 'Android and iOS builds only allow user accounts. Sign in with a user account on this device.';
+  }
 
   @override
   void initState() {
@@ -216,6 +261,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _activeRole = null;
         _isAccessRoleLoading = false;
       });
+      _stopRemoteRefreshLoop();
       return;
     }
 
@@ -224,6 +270,20 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         jsonDecode(savedSessionJson) as Map<String, dynamic>,
       );
       final refreshed = await _authService.refreshSession(savedSession);
+      if (!_isRoleAllowedOnThisPlatform(refreshed.role)) {
+        await prefs.remove(_authSessionStorageKey);
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _authSession = null;
+          _activeRole = null;
+          _accessError = _platformRoleMismatchMessage();
+          _isAccessRoleLoading = false;
+        });
+        _stopRemoteRefreshLoop();
+        return;
+      }
       await prefs.setString(_lastEmailStorageKey, refreshed.email);
       await prefs.setString(
         _authSessionStorageKey,
@@ -237,6 +297,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _activeRole = refreshed.role;
         _isAccessRoleLoading = false;
       });
+      _startRemoteRefreshLoop();
       await _restoreStateFromFirestore();
     } catch (_) {
       await prefs.remove(_authSessionStorageKey);
@@ -248,6 +309,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _activeRole = null;
         _isAccessRoleLoading = false;
       });
+      _stopRemoteRefreshLoop();
     }
   }
 
@@ -273,6 +335,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         email: normalizedEmail,
         password: password,
       );
+      if (!_isRoleAllowedOnThisPlatform(session.role)) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _isSigningIn = false;
+          _accessError = _platformRoleMismatchMessage();
+        });
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastEmailStorageKey, session.email);
       await prefs.setString(
@@ -291,6 +363,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _selectedSection = AppSection.orders;
         _selectedStatus = null;
       });
+      _startRemoteRefreshLoop();
       await _restoreStateFromFirestore();
     } catch (error) {
       if (!mounted) {
@@ -306,6 +379,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Future<void> _signOut() async {
+    _stopRemoteRefreshLoop();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_authSessionStorageKey);
     if (!mounted) {
@@ -324,6 +398,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _selectedStatus = null;
       _lastSyncedOrdersJson = null;
       _lastSyncedDraftJson = null;
+      _lastLocalSavedAt = null;
+      _lastRemoteSyncedAt = null;
+      _isRemoteSyncInProgress = false;
+      _hasRemoteSyncError = false;
     });
   }
 
@@ -422,8 +500,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _stopRemoteRefreshLoop();
       _persistDebounceTimer?.cancel();
       _persistLocalState(syncImmediately: true);
+    } else if (state == AppLifecycleState.resumed) {
+      _startRemoteRefreshLoop();
+      _refreshRemoteStateIfNeeded();
     }
   }
 
@@ -449,23 +531,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
     final sortedResults = results.toList();
     sortedResults.sort((a, b) {
+      DateTime deliveryDeadline(DateTime? date) {
+        if (date == null) {
+          return DateTime(9999);
+        }
+        return DateTime(date.year, date.month, date.day, 23, 59, 59, 999);
+      }
+
       switch (_selectedOrderSort) {
         case OrderSortOption.newest:
           return b.createdAt.compareTo(a.createdAt);
-        case OrderSortOption.oldest:
-          return a.createdAt.compareTo(b.createdAt);
-        case OrderSortOption.deliverySoonest:
-          final aDate = a.deliveryDate ?? DateTime(9999);
-          final bDate = b.deliveryDate ?? DateTime(9999);
-          final deliveryCompare = aDate.compareTo(bDate);
-          if (deliveryCompare != 0) {
-            return deliveryCompare;
-          }
-          return b.createdAt.compareTo(a.createdAt);
         case OrderSortOption.deliveryLatest:
-          final aDate = a.deliveryDate ?? DateTime(0);
-          final bDate = b.deliveryDate ?? DateTime(0);
-          final deliveryCompare = bDate.compareTo(aDate);
+          final now = DateTime.now();
+          final aRemaining = deliveryDeadline(a.deliveryDate).difference(now);
+          final bRemaining = deliveryDeadline(b.deliveryDate).difference(now);
+          final deliveryCompare = aRemaining.compareTo(bRemaining);
           if (deliveryCompare != 0) {
             return deliveryCompare;
           }
@@ -485,6 +565,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double get _estimateMaking {
     return double.tryParse(_estimateMakingController.text.trim()) ?? 0;
   }
+
+  String get _selectedEstimateMakingOption =>
+      _normalizeEstimateMakingText(_estimateMakingController.text);
 
   String get _estimatePurity {
     return _lockedEstimatePurity;
@@ -507,6 +590,89 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   String get _estimateDeliveryDateLabel {
     return DateFormat('dd/MM/yyyy').format(_estimateDeliveryDate);
+  }
+
+  String get _saveStatusText {
+    final localSavedAt = _lastLocalSavedAt;
+    final remoteSyncedAt = _lastRemoteSyncedAt;
+    final timeFormatter = DateFormat('HH:mm:ss');
+
+    if (localSavedAt == null) {
+      return _authSession == null
+          ? 'Local save not started yet'
+          : 'Waiting for first save';
+    }
+
+    final localText = 'Saved locally ${timeFormatter.format(localSavedAt)}';
+    if (_authSession == null) {
+      return '$localText | local only';
+    }
+    if (_isRemoteSyncInProgress) {
+      return '$localText | syncing...';
+    }
+    if (_hasRemoteSyncError) {
+      return '$localText | sync pending';
+    }
+    if (remoteSyncedAt != null) {
+      return '$localText | synced ${timeFormatter.format(remoteSyncedAt)}';
+    }
+    return '$localText | sync pending';
+  }
+
+  Widget _buildSaveStatusBar() {
+    final theme = Theme.of(context);
+    final statusTextColor = theme.colorScheme.onPrimary;
+    final statusColor = _hasRemoteSyncError
+        ? theme.colorScheme.error
+        : _isRemoteSyncInProgress
+        ? theme.colorScheme.primary
+        : theme.colorScheme.onSurfaceVariant;
+    final statusIcon = _hasRemoteSyncError
+        ? Icons.cloud_off_outlined
+        : _isRemoteSyncInProgress
+        ? Icons.cloud_upload_outlined
+        : Icons.cloud_done_outlined;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          Icon(statusIcon, size: 16, color: statusColor),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _saveStatusText,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: statusTextColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _normalizeEstimateMakingText(dynamic rawValue) {
+    final raw = rawValue?.toString().trim() ?? '';
+    if (raw.isEmpty) {
+      return '15';
+    }
+    if (_estimateMakingOptions.contains(raw)) {
+      return raw;
+    }
+    final parsed = double.tryParse(raw);
+    if (parsed == null) {
+      return '15';
+    }
+    final normalized = parsed == parsed.roundToDouble()
+        ? parsed.toInt().toString()
+        : parsed.toString();
+    return _estimateMakingOptions.contains(normalized) ? normalized : '15';
   }
 
   bool get _isEditingEstimate {
@@ -545,8 +711,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   String get _estimateAutoWeightRangeLabel {
     final startWeight = _estimateTotalEstimatedWeight;
-    final endWeight = startWeight + 4;
-    return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+    final formattedWeight = _formatWeightFixed3(_truncateWeight3(startWeight));
+    return '$formattedWeight gm - $formattedWeight gm';
   }
 
   double? get _estimateManualWeightRangeAddition {
@@ -562,7 +728,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     final manualAddition = _estimateManualWeightRangeAddition;
     if (manualAddition != null) {
       final endWeight = startWeight + manualAddition;
-      return '${_formatWeight3(startWeight)} gm - ${_formatWeight3(endWeight)} gm';
+      return '${_formatWeightFixed3(_truncateWeight3(startWeight))} gm - ${_formatWeightFixed3(_truncateWeight3(endWeight))} gm';
     }
 
     final legacyRange = _estimateWeightRangeController.text.trim();
@@ -1239,8 +1405,111 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     });
   }
 
+  bool get _hasPendingLocalChanges {
+    if (_authSession == null || _isRestoringLocalState) {
+      return false;
+    }
+    return _serializeOrdersJson() != _lastSyncedOrdersJson ||
+        _serializeDraftJson() != _lastSyncedDraftJson;
+  }
+
+  void _startRemoteRefreshLoop() {
+    _stopRemoteRefreshLoop();
+    if (_authSession == null) {
+      return;
+    }
+    _remoteRefreshTimer = Timer.periodic(_remoteRefreshInterval, (_) {
+      _refreshRemoteStateIfNeeded();
+    });
+  }
+
+  void _stopRemoteRefreshLoop() {
+    _remoteRefreshTimer?.cancel();
+    _remoteRefreshTimer = null;
+  }
+
+  String _ordersSnapshotJson(List<Order> orders) {
+    return jsonEncode(orders.map((order) => order.toJson()).toList());
+  }
+
+  Future<void> _persistSnapshotsLocally({
+    required String ordersJson,
+    String? draftJson,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_ordersStorageKey, ordersJson);
+    if (draftJson == null) {
+      await prefs.remove(_estimateStorageKey);
+    } else {
+      await prefs.setString(_estimateStorageKey, draftJson);
+    }
+  }
+
+  bool _setControllerTextIfChanged(
+    TextEditingController controller,
+    String nextText,
+  ) {
+    if (controller.text == nextText) {
+      return false;
+    }
+    controller.text = nextText;
+    return true;
+  }
+
+  bool _applyRatesSnapshot(_AppRates rates) {
+    var changed = false;
+    changed =
+        _setControllerTextIfChanged(
+          _newItemsGold22RateController,
+          _formatRateControllerText(rates.gold22Rate),
+        ) ||
+        changed;
+    changed =
+        _setControllerTextIfChanged(
+          _newItemsGold18RateController,
+          _formatRateControllerText(rates.gold18Rate),
+        ) ||
+        changed;
+    changed =
+        _setControllerTextIfChanged(
+          _newItemsSilverRateController,
+          _formatRateControllerText(rates.silverRate),
+        ) ||
+        changed;
+
+    if (_ratesGold24Rate != rates.gold24Rate ||
+        _ratesUpdatedAt != rates.updatedAt ||
+        _ratesUpdatedByEmail != rates.updatedByEmail ||
+        _ratesSyncedAt == null) {
+      changed = true;
+      _ratesGold24Rate = rates.gold24Rate;
+      _ratesUpdatedAt = rates.updatedAt;
+      _ratesUpdatedByEmail = rates.updatedByEmail;
+      _ratesSyncedAt = DateTime.now();
+    } else {
+      _ratesSyncedAt = DateTime.now();
+    }
+
+    return changed;
+  }
+
   String _serializeOrdersJson() {
     return jsonEncode(_orders.map((order) => order.toJson()).toList());
+  }
+
+  void _applySavedOrdersJson(String encodedOrders) {
+    final decoded = jsonDecode(encodedOrders);
+    if (decoded is! List) {
+      return;
+    }
+
+    _orders
+      ..clear()
+      ..addAll(
+        decoded.whereType<Map>().map(
+          (order) => Order.fromJson(Map<String, dynamic>.from(order)),
+        ),
+      );
   }
 
   Map<String, dynamic> _buildDraftStateMap() {
@@ -1248,6 +1517,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       'selectedSection': _selectedSection.name,
       'selectedStatus': _selectedStatus?.name,
       'selectedOrderSort': _selectedOrderSort.name,
+      'searchQuery': _searchQuery,
       'purity': _estimatePurityController.text,
       'gst': _estimateGstController.text,
       'making': _estimateMakingController.text,
@@ -1343,11 +1613,32 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       return;
     }
 
+    if (mounted) {
+      setState(() {
+        _isRemoteSyncInProgress = true;
+        _hasRemoteSyncError = false;
+      });
+    }
+
     try {
       await Future.wait(writes);
       _lastSyncedOrdersJson = nextOrdersJson;
       _lastSyncedDraftJson = nextDraftJson;
-    } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _isRemoteSyncInProgress = false;
+          _hasRemoteSyncError = false;
+          _lastRemoteSyncedAt = DateTime.now();
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isRemoteSyncInProgress = false;
+          _hasRemoteSyncError = true;
+        });
+      }
+    }
   }
 
   Future<void> _syncOrdersCollection(String idToken) async {
@@ -1374,11 +1665,96 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
     final ordersJson = _serializeOrdersJson();
     final draftJson = _serializeDraftJson();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_ordersStorageKey, ordersJson);
+    await prefs.setString(_estimateStorageKey, draftJson);
+    if (mounted) {
+      setState(() {
+        _lastLocalSavedAt = DateTime.now();
+      });
+    }
     if (syncImmediately) {
       await _syncStateToFirestore(ordersJson: ordersJson, draftJson: draftJson);
       return;
     }
     _scheduleFirestoreSync(ordersJson: ordersJson, draftJson: draftJson);
+  }
+
+  Future<void> _refreshRemoteStateIfNeeded() async {
+    final session = _authSession;
+    if (session == null ||
+        _isRestoringLocalState ||
+        _isRemoteSyncInProgress ||
+        _isRemoteRefreshInProgress ||
+        _hasPendingLocalChanges) {
+      return;
+    }
+
+    _isRemoteRefreshInProgress = true;
+    try {
+      final results = await Future.wait<dynamic>([
+        _appSyncService.fetchOrders(idToken: session.idToken),
+        _appSyncService.fetchDraft(idToken: session.idToken, uid: session.uid),
+        _ratesRepository.fetchRates(),
+      ]);
+      if (!mounted || _authSession?.uid != session.uid) {
+        return;
+      }
+
+      final remoteOrders = results[0] as List<Order>;
+      final remoteDraft = results[1] as Map<String, dynamic>?;
+      final rates = results[2] as _AppRates;
+      final remoteOrdersJson = _ordersSnapshotJson(remoteOrders);
+      final remoteDraftJson = remoteDraft == null
+          ? null
+          : jsonEncode(remoteDraft);
+      final shouldApplyOrders = remoteOrdersJson != _lastSyncedOrdersJson;
+      final shouldApplyDraft =
+          remoteDraftJson != null && remoteDraftJson != _lastSyncedDraftJson;
+
+      if (shouldApplyOrders || shouldApplyDraft) {
+        _isRestoringLocalState = true;
+        setState(() {
+          if (shouldApplyOrders) {
+            _orders
+              ..clear()
+              ..addAll(remoteOrders);
+          }
+          if (shouldApplyDraft && remoteDraft != null) {
+            _applySavedDraftMap(remoteDraft);
+          }
+          _lastLocalSavedAt = DateTime.now();
+          _lastRemoteSyncedAt = DateTime.now();
+          _hasRemoteSyncError = false;
+        });
+        _lastSyncedOrdersJson = remoteOrdersJson;
+        if (shouldApplyDraft) {
+          _lastSyncedDraftJson = remoteDraftJson;
+        }
+        await _persistSnapshotsLocally(
+          ordersJson: remoteOrdersJson,
+          draftJson: shouldApplyDraft ? remoteDraftJson : _serializeDraftJson(),
+        );
+        _isRestoringLocalState = false;
+      }
+
+      if (!mounted || _authSession?.uid != session.uid) {
+        return;
+      }
+
+      var ratesChanged = false;
+      setState(() {
+        ratesChanged = _applyRatesSnapshot(rates);
+      });
+      if (ratesChanged) {
+        _schedulePersistence();
+      }
+    } catch (_) {
+      // Keep the last known local state; the status bar already reflects sync issues.
+    } finally {
+      _isRemoteRefreshInProgress = false;
+      _isRestoringLocalState = false;
+    }
   }
 
   Future<void> _loadRatesFromFirestore({bool showFeedback = false}) async {
@@ -1396,23 +1772,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         return;
       }
 
-      _newItemsGold22RateController.text = _formatRateControllerText(
-        rates.gold22Rate,
-      );
-      _newItemsGold18RateController.text = _formatRateControllerText(
-        rates.gold18Rate,
-      );
-      _newItemsSilverRateController.text = _formatRateControllerText(
-        rates.silverRate,
-      );
-
+      var changed = false;
       setState(() {
-        _ratesGold24Rate = rates.gold24Rate;
-        _ratesSyncedAt = DateTime.now();
-        _ratesUpdatedAt = rates.updatedAt;
-        _ratesUpdatedByEmail = rates.updatedByEmail;
+        changed = _applyRatesSnapshot(rates);
       });
-      _schedulePersistence();
+      if (changed) {
+        _schedulePersistence();
+      }
 
       if (showFeedback) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1442,6 +1808,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   Future<void> _scanQrTagIntoNewItems() async {
     if (_isTagScanning) {
+      return;
+    }
+    if (!_supportsQrScanning) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'QR scanning is not available on ${defaultTargetPlatform.name}. Use New Item instead.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -1697,7 +2073,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             .toList();
     final restoredDifferenceNewItem = decodedEstimate['differenceNewItem'];
 
-    _selectedSection = AppSection.orders;
+    final savedSection = decodedEstimate['selectedSection'] as String?;
+    _selectedSection = _isUser
+        ? AppSection.orders
+        : AppSection.values.firstWhere(
+            (section) => section.name == savedSection,
+            orElse: () => AppSection.orders,
+          );
 
     final savedStatus = decodedEstimate['selectedStatus'] as String?;
     _selectedStatus = savedStatus == null
@@ -1710,16 +2092,23 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
     _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = decodedEstimate['gst'] as String? ?? '3';
-    _estimateMakingController.text =
-        decodedEstimate['making'] as String? ?? '15';
-    _estimateWeightRangeController.text =
-        decodedEstimate['weightRange'] as String? ?? '';
+    _estimateMakingController.text = _normalizeEstimateMakingText(
+      decodedEstimate['making'],
+    );
+    final restoredWeightRange =
+        decodedEstimate['weightRange'] as String? ??
+        _defaultEstimateWeightRange;
+    _estimateWeightRangeController.text = restoredWeightRange.trim().isEmpty
+        ? _defaultEstimateWeightRange
+        : restoredWeightRange;
     _estimateCustomerNameController.text =
         decodedEstimate['customerName'] as String? ?? '';
     _estimateCustomerMobileController.text =
         decodedEstimate['customerMobile'] as String? ?? '';
     _estimateAlternateMobileController.text =
         decodedEstimate['alternateMobile'] as String? ?? '';
+    _searchQuery = decodedEstimate['searchQuery'] as String? ?? '';
+    _searchController.text = _searchQuery;
     _newItemsGold22RateController.text =
         decodedEstimate['newItemsGold22Rate'] as String? ?? '';
     _newItemsGold18RateController.text =
@@ -1874,6 +2263,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         if (remoteDraftData != null) {
           _applySavedDraftMap(remoteDraftData);
         }
+        _lastLocalSavedAt = DateTime.now();
+        if (hasRemoteOrders || hasRemoteDraft) {
+          _lastRemoteSyncedAt = DateTime.now();
+          _hasRemoteSyncError = false;
+        }
       });
       _lastSyncedOrdersJson = hasRemoteOrders
           ? jsonEncode(remoteOrders.map((order) => order.toJson()).toList())
@@ -1894,8 +2288,37 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   Future<void> _restoreLocalState() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_ordersStorageKey);
-    await prefs.remove(_estimateStorageKey);
+    final savedOrdersJson = prefs.getString(_ordersStorageKey);
+    final savedDraftJson = prefs.getString(_estimateStorageKey);
+    if (savedOrdersJson == null && savedDraftJson == null) {
+      return;
+    }
+
+    try {
+      _isRestoringLocalState = true;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (savedOrdersJson != null && savedOrdersJson.trim().isNotEmpty) {
+          _applySavedOrdersJson(savedOrdersJson);
+        }
+        if (savedDraftJson != null && savedDraftJson.trim().isNotEmpty) {
+          final decodedDraft = jsonDecode(savedDraftJson);
+          if (decodedDraft is Map<String, dynamic>) {
+            _applySavedDraftMap(decodedDraft);
+          } else if (decodedDraft is Map) {
+            _applySavedDraftMap(Map<String, dynamic>.from(decodedDraft));
+          }
+        }
+        _lastLocalSavedAt = DateTime.now();
+      });
+    } catch (_) {
+      await prefs.remove(_ordersStorageKey);
+      await prefs.remove(_estimateStorageKey);
+    } finally {
+      _isRestoringLocalState = false;
+    }
   }
 
   void _openAddOrderSheet() {
@@ -1921,8 +2344,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateDeliveryDate = DateTime.now();
     _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = '3';
-    _estimateMakingController.text = '15';
-    _estimateWeightRangeController.clear();
+    _estimateMakingController.text = _normalizeEstimateMakingText('15');
+    _estimateWeightRangeController.text = _defaultEstimateWeightRange;
     _estimateCustomerNameController.clear();
     _estimateCustomerMobileController.clear();
     _estimateAlternateMobileController.clear();
@@ -1984,8 +2407,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateDeliveryDate = order.deliveryDate ?? DateTime.now();
     _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = (order.estimateGst ?? 3).toString();
-    _estimateMakingController.text = (order.estimateMaking ?? 15).toString();
-    _estimateWeightRangeController.text = order.estimateWeightRange ?? '';
+    _estimateMakingController.text = _normalizeEstimateMakingText(
+      order.estimateMaking,
+    );
+    _estimateWeightRangeController.text =
+        (order.estimateWeightRange?.trim().isNotEmpty ?? false)
+        ? order.estimateWeightRange!.trim()
+        : _defaultEstimateWeightRange;
     _estimateCustomerNameController.text = order.customer;
     _estimateCustomerMobileController.text = order.customerPhone ?? '';
     _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
@@ -2185,7 +2613,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return !hasTopLevelError && !hasItemError;
   }
 
-  void _saveEstimateOrder({bool stayOnEstimate = false}) {
+  void _saveEstimateOrder({bool stayOnEstimate = false}) async {
     final populatedItems = _estimateItems
         .where((item) => !item.isEmpty)
         .toList();
@@ -2289,9 +2717,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _clearEstimateForm();
         _selectedSection = AppSection.orders;
         _selectedStatus = null;
+        _selectedOrderSort = OrderSortOption.newest;
       }
     });
-    _schedulePersistence();
+    await _persistLocalState(syncImmediately: true);
+    if (!mounted) {
+      return;
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -2421,9 +2853,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             gst: '${_estimateGst.toStringAsFixed(2)}%',
             totalQuantity: _estimateTotalQuantity.toString(),
             totalWeight: _estimateWeightRangeLabel,
-            gold22Rate: _newItemRateForCategory('Gold22kt'),
-            gold18Rate: _newItemRateForCategory('Gold18kt'),
-            silverRate: _newItemRateForCategory('Silver'),
             items: _sortedEstimateItems,
           );
         },
@@ -2906,6 +3335,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                                   _searchController.clear();
                                   _searchQuery = '';
                                 });
+                                _schedulePersistence();
                               },
                               tooltip: 'Clear search',
                             ),
@@ -2914,6 +3344,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       setState(() {
                         _searchQuery = value;
                       });
+                      _schedulePersistence();
                     },
                   ),
                 ),
@@ -3092,12 +3523,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    initialValue:
-                        _estimateMakingOptions.contains(
-                          _estimateMakingController.text.trim(),
-                        )
-                        ? _estimateMakingController.text.trim()
-                        : '15',
+                    key: ValueKey(
+                      'estimate-making-$_selectedEstimateMakingOption',
+                    ),
+                    initialValue: _selectedEstimateMakingOption,
                     decoration: const InputDecoration(
                       labelText: 'Making',
                       suffixText: '%',
@@ -3331,12 +3760,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
-                    initialValue:
-                        _estimateMakingOptions.contains(
-                          _estimateMakingController.text.trim(),
-                        )
-                        ? _estimateMakingController.text.trim()
-                        : '15',
+                    key: ValueKey(
+                      'estimate-making-$_selectedEstimateMakingOption',
+                    ),
+                    initialValue: _selectedEstimateMakingOption,
                     decoration: const InputDecoration(
                       labelText: 'Making',
                       suffixText: '%',
@@ -3784,7 +4211,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.qr_code_scanner_outlined),
-                  label: const Text('Scan QR Tag'),
+                  label: Text(
+                    _supportsQrScanning ? 'Scan QR Tag' : 'QR Not Available',
+                  ),
                 ),
               ],
             ),
@@ -4285,13 +4714,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Text(
-                        'Sign In',
+                        _accessGateTitle,
                         style: Theme.of(context).textTheme.headlineSmall
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Use your Firebase account to continue. Admin gets full access, and user accounts can view and print saved orders only.',
+                        _accessGateDescription,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.grey.shade700,
                         ),
@@ -4349,6 +4778,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateClockTimer?.cancel();
     _persistDebounceTimer?.cancel();
     _firestoreSyncDebounceTimer?.cancel();
+    _remoteRefreshTimer?.cancel();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
     _searchController.dispose();
@@ -4515,6 +4945,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               : null,
           title: Text(appBarTitle),
           actions: appBarActions,
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(28),
+            child: _buildSaveStatusBar(),
+          ),
         ),
         floatingActionButton: _isAdmin && _selectedSection == AppSection.orders
             ? FloatingActionButton.extended(
@@ -4523,7 +4957,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 label: const Text('New order'),
               )
             : null,
-        bottomNavigationBar: _isUser
+        bottomNavigationBar: !_showAdminEditNavigation
             ? null
             : Column(
                 mainAxisSize: MainAxisSize.min,
@@ -4688,7 +5122,13 @@ class _EstimateItemDraft {
     final weightValue = double.tryParse(
       estimatedNettWeightController.text.trim(),
     );
-    if (weightValue == null || weightValue <= 0) {
+    final allowsZeroWeight = switch (purityController.text.trim()) {
+      '18K' || 'Silver' => true,
+      _ => false,
+    };
+    if (weightValue == null ||
+        weightValue < 0 ||
+        (!allowsZeroWeight && weightValue <= 0)) {
       return 'Enter weight';
     }
     return null;
@@ -5909,15 +6349,11 @@ class _AdvanceValuationDraft {
   }
 
   double get effectiveRate {
-    return rate + ((rate * rateMaking) / 100);
+    return _truncateTo3Decimals(rate + ((rate * rateMaking) / 100));
   }
 
   double get weight {
-    final denominator = effectiveRate;
-    if (denominator <= 0) {
-      return 0;
-    }
-    return amount / denominator;
+    return _netWeightFromRateWithMaking(amount, effectiveRate);
   }
 
   AdvanceValuationLine get line => AdvanceValuationLine(
@@ -6339,15 +6775,13 @@ class _AdvanceOldItemDraft {
   double get amount => nettWeight * tanch * returnRate;
 
   double get advanceEffectiveRate {
-    return advanceRate + ((advanceRate * advanceMaking) / 100);
+    return _truncateTo3Decimals(
+      advanceRate + ((advanceRate * advanceMaking) / 100),
+    );
   }
 
   double get advanceWeight {
-    final effectiveRate = advanceEffectiveRate;
-    if (effectiveRate <= 0) {
-      return 0;
-    }
-    return amount / effectiveRate;
+    return _netWeightFromRateWithMaking(amount, advanceEffectiveRate);
   }
 
   bool get isEmpty =>

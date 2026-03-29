@@ -8,7 +8,7 @@ class OrderApp extends StatelessWidget {
     final colorScheme = ColorScheme.fromSeed(seedColor: Colors.teal);
 
     return MaterialApp(
-      title: 'Jewellery Orders',
+      title: _platformAppTitle,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

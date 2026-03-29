@@ -14,10 +14,22 @@ String _formatWeightFixed3(double value) {
   return formatter.format(value);
 }
 
-double _truncateWeight3(double value) {
+double _truncateTo3Decimals(double value) {
   return value >= 0
       ? (value * 1000).floorToDouble() / 1000
       : (value * 1000).ceilToDouble() / 1000;
+}
+
+double _truncateWeight3(double value) {
+  return _truncateTo3Decimals(value);
+}
+
+double _netWeightFromRateWithMaking(double amount, double rateWithMaking) {
+  final denominator = _truncateTo3Decimals(rateWithMaking);
+  if (denominator <= 0) {
+    return 0;
+  }
+  return amount / denominator;
 }
 
 String _formatTanchPercent(double value) {

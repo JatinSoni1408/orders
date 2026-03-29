@@ -13,7 +13,7 @@ enum AppSection {
 
 enum AppAccessRole { admin, user }
 
-enum OrderSortOption { newest, oldest, deliverySoonest, deliveryLatest, nameAZ }
+enum OrderSortOption { newest, deliveryLatest, nameAZ }
 
 enum AdvanceMode { cash, upi, banking, imps, neft, rtgs }
 
@@ -384,15 +384,11 @@ class AdvanceValuationLine {
   final String? chequeNumber;
 
   double get effectiveRate {
-    return rate + ((rate * rateMaking) / 100);
+    return _truncateTo3Decimals(rate + ((rate * rateMaking) / 100));
   }
 
   double get weight {
-    final denominator = effectiveRate;
-    if (denominator <= 0) {
-      return 0;
-    }
-    return amount / denominator;
+    return _netWeightFromRateWithMaking(amount, effectiveRate);
   }
 
   Map<String, dynamic> toJson() {
@@ -455,15 +451,13 @@ class OldItemReturn {
   double get amount => nettWeight * tanch * returnRate;
 
   double get advanceEffectiveRate {
-    return advanceRate + ((advanceRate * advanceMaking) / 100);
+    return _truncateTo3Decimals(
+      advanceRate + ((advanceRate * advanceMaking) / 100),
+    );
   }
 
   double get advanceWeight {
-    final effectiveRate = advanceEffectiveRate;
-    if (effectiveRate <= 0) {
-      return 0;
-    }
-    return amount / effectiveRate;
+    return _netWeightFromRateWithMaking(amount, advanceEffectiveRate);
   }
 
   Map<String, dynamic> toJson() {
@@ -587,13 +581,9 @@ extension OrderSortOptionX on OrderSortOption {
   String get label {
     switch (this) {
       case OrderSortOption.newest:
-        return 'Newest';
-      case OrderSortOption.oldest:
-        return 'Oldest';
-      case OrderSortOption.deliverySoonest:
-        return 'Delivery Soon';
+        return 'Newest First';
       case OrderSortOption.deliveryLatest:
-        return 'Delivery Late';
+        return 'Delivery Date';
       case OrderSortOption.nameAZ:
         return 'Name A-Z';
     }

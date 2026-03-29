@@ -26,7 +26,7 @@ class _OrderCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _StatusPill(status: order.status),
+                  _DeliveryCountdownPill(deliveryDate: order.deliveryDate),
                   const SizedBox(height: 8),
                   Text(
                     order.customer,
@@ -110,25 +110,96 @@ class _OrderCard extends StatelessWidget {
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.status});
+class _DeliveryCountdownPill extends StatefulWidget {
+  const _DeliveryCountdownPill({required this.deliveryDate});
 
-  final OrderStatus status;
+  final DateTime? deliveryDate;
+
+  @override
+  State<_DeliveryCountdownPill> createState() => _DeliveryCountdownPillState();
+}
+
+class _DeliveryCountdownPillState extends State<_DeliveryCountdownPill> {
+  Timer? _ticker;
+  DateTime _now = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _now = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  DateTime _deliveryDeadline(DateTime date) {
+    return DateTime(date.year, date.month, date.day, 23, 59, 59, 999);
+  }
+
+  String _formatDuration(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final days = totalSeconds ~/ Duration.secondsPerDay;
+    final hours =
+        (totalSeconds % Duration.secondsPerDay) ~/ Duration.secondsPerHour;
+    final minutes =
+        (totalSeconds % Duration.secondsPerHour) ~/ Duration.secondsPerMinute;
+    final seconds = totalSeconds % Duration.secondsPerMinute;
+
+    if (days > 0) {
+      return '${days}d ${hours.toString().padLeft(2, '0')}h ${minutes.toString().padLeft(2, '0')}m ${seconds.toString().padLeft(2, '0')}s';
+    }
+    return '${hours.toString().padLeft(2, '0')}h ${minutes.toString().padLeft(2, '0')}m ${seconds.toString().padLeft(2, '0')}s';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final color = status.color(context);
+    final deliveryDate = widget.deliveryDate;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    late final String label;
+    late final Color textColor;
+    late final Color backgroundColor;
+
+    if (deliveryDate == null) {
+      label = 'No delivery date';
+      textColor = Colors.grey.shade700;
+      backgroundColor = colorScheme.surfaceContainerHighest;
+    } else {
+      final remaining = _deliveryDeadline(deliveryDate).difference(_now);
+      if (remaining.isNegative) {
+        label = 'Overdue ${_formatDuration(remaining.abs())}';
+        textColor = colorScheme.error;
+        backgroundColor = colorScheme.errorContainer;
+      } else {
+        label = _formatDuration(remaining);
+        final isUrgent = remaining.inHours < 24;
+        textColor = isUrgent ? colorScheme.tertiary : colorScheme.primary;
+        backgroundColor = isUrgent
+            ? colorScheme.tertiaryContainer
+            : colorScheme.primaryContainer;
+      }
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withAlpha(31),
+        color: backgroundColor,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        status.label,
+        label,
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: color,
+          color: textColor,
           fontWeight: FontWeight.w600,
         ),
       ),

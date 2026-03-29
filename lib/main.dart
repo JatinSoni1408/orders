@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -25,8 +26,43 @@ part 'src/app_sync_service.dart';
 part 'src/tag_service.dart';
 part 'src/qr_scanner_page.dart';
 
+bool get _shouldLockPortrait =>
+    !kIsWeb &&
+    (defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS);
+
+bool get _supportsQrScanning =>
+    kIsWeb ||
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.iOS ||
+    defaultTargetPlatform == TargetPlatform.macOS;
+
+AppAccessRole? get _requiredAccessRoleForPlatform {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+    return AppAccessRole.admin;
+  }
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    return AppAccessRole.user;
+  }
+  return null;
+}
+
+String get _platformAppTitle {
+  switch (_requiredAccessRoleForPlatform) {
+    case AppAccessRole.admin:
+      return 'Jewellery Admin';
+    case AppAccessRole.user:
+    case null:
+      return 'Jewellery Orders';
+  }
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  if (_shouldLockPortrait) {
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  }
   runApp(const OrderApp());
 }

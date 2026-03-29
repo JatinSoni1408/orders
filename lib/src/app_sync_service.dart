@@ -5,10 +5,12 @@ class _FirestoreAppSyncService {
 
   static const String _projectId = 'shubham-jewellers-1976';
   static const String _apiKey = 'AIzaSyCoR4bdnNAFxCPFxwNj6sTSsU6sc2m5e6o';
+  static const String _ordersCollectionPath = 'orders';
+  static const String _legacyDraftCollectionPath = 'app_state';
 
   Future<List<Order>> fetchOrders({required String idToken}) async {
     final documents = await _fetchCollectionDocuments(
-      'orders',
+      _ordersCollectionPath,
       idToken: idToken,
       pageSize: 500,
     );
@@ -19,6 +21,9 @@ class _FirestoreAppSyncService {
             return null;
           }
           final decoded = _decodeFields(fields);
+          if (decoded['documentKind'] == 'draft') {
+            return null;
+          }
           return Order.fromJson(decoded);
         })
         .whereType<Order>()
@@ -27,9 +32,10 @@ class _FirestoreAppSyncService {
 
   Future<void> saveOrder({required String idToken, required Order order}) {
     return _patchDocument(
-      'orders/${order.id}',
+      '$_ordersCollectionPath/${order.id}',
       fields: {
         ..._encodeMap(order.toJson()),
+        'documentKind': {'stringValue': 'order'},
         'updatedAt': {
           'timestampValue': DateTime.now().toUtc().toIso8601String(),
         },
@@ -39,17 +45,57 @@ class _FirestoreAppSyncService {
   }
 
   Future<void> deleteOrder({required String idToken, required String orderId}) {
-    return _deleteDocument('orders/$orderId', idToken: idToken);
+    return _deleteDocument('$_ordersCollectionPath/$orderId', idToken: idToken);
   }
 
   Future<Map<String, dynamic>?> fetchDraft({
     required String idToken,
     required String uid,
   }) async {
-    final document = await _fetchDocument(
-      'app_state/draft_$uid',
+    final ordersDraft = await _fetchDecodedDocument(
+      '$_ordersCollectionPath/draft_$uid',
       idToken: idToken,
     );
+    if (ordersDraft != null) {
+      return ordersDraft;
+    }
+    return _fetchDecodedDocument(
+      '$_legacyDraftCollectionPath/draft_$uid',
+      idToken: idToken,
+    );
+  }
+
+  Future<void> saveDraft({
+    required String idToken,
+    required String uid,
+    required Map<String, dynamic> draft,
+  }) {
+    final encodedDraft = {
+      ..._encodeMap(draft),
+      'documentKind': {'stringValue': 'draft'},
+      'updatedAt': {
+        'timestampValue': DateTime.now().toUtc().toIso8601String(),
+      },
+    };
+    return Future.wait([
+      _patchDocument(
+        '$_ordersCollectionPath/draft_$uid',
+        fields: encodedDraft,
+        idToken: idToken,
+      ),
+      _patchDocument(
+        '$_legacyDraftCollectionPath/draft_$uid',
+        fields: encodedDraft,
+        idToken: idToken,
+      ),
+    ]).then((_) {});
+  }
+
+  Future<Map<String, dynamic>?> _fetchDecodedDocument(
+    String documentPath, {
+    required String idToken,
+  }) async {
+    final document = await _fetchDocument(documentPath, idToken: idToken);
     if (document == null) {
       return null;
     }
@@ -60,21 +106,49 @@ class _FirestoreAppSyncService {
     return _decodeFields(fields);
   }
 
-  Future<void> saveDraft({
+  Future<void> _patchDocument(
+    String documentPath, {
+    required Map<String, dynamic> fields,
     required String idToken,
-    required String uid,
-    required Map<String, dynamic> draft,
-  }) {
-    return _patchDocument(
-      'app_state/draft_$uid',
-      fields: {
-        ..._encodeMap(draft),
-        'updatedAt': {
-          'timestampValue': DateTime.now().toUtc().toIso8601String(),
-        },
-      },
-      idToken: idToken,
+  }) async {
+    final uri = Uri.https(
+      'firestore.googleapis.com',
+      '/v1/projects/$_projectId/databases/(default)/documents/$documentPath',
+      {'key': _apiKey},
     );
+    final response = await http.patch(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'fields': fields}),
+    );
+    if (response.statusCode != 200) {
+      throw StateError(
+        'Firestore write failed with status ${response.statusCode}.',
+      );
+    }
+  }
+
+  Future<void> _deleteDocument(
+    String documentPath, {
+    required String idToken,
+  }) async {
+    final uri = Uri.https(
+      'firestore.googleapis.com',
+      '/v1/projects/$_projectId/databases/(default)/documents/$documentPath',
+      {'key': _apiKey},
+    );
+    final response = await http.delete(
+      uri,
+      headers: {'Authorization': 'Bearer $idToken'},
+    );
+    if (response.statusCode != 200 && response.statusCode != 404) {
+      throw StateError(
+        'Firestore delete failed with status ${response.statusCode}.',
+      );
+    }
   }
 
   Future<List<Map<String, dynamic>>> _fetchCollectionDocuments(
@@ -157,51 +231,6 @@ class _FirestoreAppSyncService {
       throw const FormatException('Unexpected Firestore document response.');
     }
     return body;
-  }
-
-  Future<void> _patchDocument(
-    String documentPath, {
-    required Map<String, dynamic> fields,
-    required String idToken,
-  }) async {
-    final uri = Uri.https(
-      'firestore.googleapis.com',
-      '/v1/projects/$_projectId/databases/(default)/documents/$documentPath',
-      {'key': _apiKey},
-    );
-    final response = await http.patch(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $idToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({'fields': fields}),
-    );
-    if (response.statusCode != 200) {
-      throw StateError(
-        'Firestore write failed with status ${response.statusCode}.',
-      );
-    }
-  }
-
-  Future<void> _deleteDocument(
-    String documentPath, {
-    required String idToken,
-  }) async {
-    final uri = Uri.https(
-      'firestore.googleapis.com',
-      '/v1/projects/$_projectId/databases/(default)/documents/$documentPath',
-      {'key': _apiKey},
-    );
-    final response = await http.delete(
-      uri,
-      headers: {'Authorization': 'Bearer $idToken'},
-    );
-    if (response.statusCode != 200 && response.statusCode != 404) {
-      throw StateError(
-        'Firestore delete failed with status ${response.statusCode}.',
-      );
-    }
   }
 
   static Map<String, dynamic> _encodeMap(Map<String, dynamic> value) {
