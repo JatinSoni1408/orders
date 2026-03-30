@@ -148,7 +148,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _selectedSection == AppSection.actual;
   bool get _isAdmin => _activeRole == AppAccessRole.admin;
   bool get _isUser => _activeRole == AppAccessRole.user;
-  bool get _showAdminEditNavigation => _isAdmin && _isEditingEstimate;
+  bool get _showAdminEditNavigation =>
+      _isAdmin && _isEditingEstimate && _selectedSection != AppSection.orders;
   AppAccessRole? get _platformRequiredRole => _requiredAccessRoleForPlatform;
 
   bool _isRoleAllowedOnThisPlatform(AppAccessRole role) {
@@ -246,12 +247,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Future<void> _restoreAuthSession() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastEmail = prefs.getString(_lastEmailStorageKey)?.trim() ?? '';
-    if (lastEmail.isNotEmpty) {
-      _loginEmailController.text = lastEmail;
+    final localStore = await _appLocalStore;
+    final lastEmail = localStore.getString(_lastEmailStorageKey);
+    final savedLastEmail = (await lastEmail)?.trim() ?? '';
+    if (savedLastEmail.isNotEmpty) {
+      _loginEmailController.text = savedLastEmail;
     }
-    final savedSessionJson = prefs.getString(_authSessionStorageKey);
+    final savedSessionJson = await localStore.getString(_authSessionStorageKey);
     if (savedSessionJson == null) {
       if (!mounted) {
         return;
@@ -271,7 +273,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       );
       final refreshed = await _authService.refreshSession(savedSession);
       if (!_isRoleAllowedOnThisPlatform(refreshed.role)) {
-        await prefs.remove(_authSessionStorageKey);
+        await localStore.remove(_authSessionStorageKey);
         if (!mounted) {
           return;
         }
@@ -284,8 +286,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _stopRemoteRefreshLoop();
         return;
       }
-      await prefs.setString(_lastEmailStorageKey, refreshed.email);
-      await prefs.setString(
+      await localStore.setString(_lastEmailStorageKey, refreshed.email);
+      await localStore.setString(
         _authSessionStorageKey,
         jsonEncode(refreshed.toJson()),
       );
@@ -300,7 +302,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _startRemoteRefreshLoop();
       await _restoreStateFromFirestore();
     } catch (_) {
-      await prefs.remove(_authSessionStorageKey);
+      await localStore.remove(_authSessionStorageKey);
       if (!mounted) {
         return;
       }
@@ -345,9 +347,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         });
         return;
       }
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_lastEmailStorageKey, session.email);
-      await prefs.setString(
+      final localStore = await _appLocalStore;
+      await localStore.setString(_lastEmailStorageKey, session.email);
+      await localStore.setString(
         _authSessionStorageKey,
         jsonEncode(session.toJson()),
       );
@@ -380,8 +382,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   Future<void> _signOut() async {
     _stopRemoteRefreshLoop();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_authSessionStorageKey);
+    final localStore = await _appLocalStore;
+    await localStore.remove(_authSessionStorageKey);
     if (!mounted) {
       return;
     }
@@ -1436,12 +1438,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     required String ordersJson,
     String? draftJson,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ordersStorageKey, ordersJson);
+    final localStore = await _appLocalStore;
+    await localStore.setString(_ordersStorageKey, ordersJson);
     if (draftJson == null) {
-      await prefs.remove(_estimateStorageKey);
+      await localStore.remove(_estimateStorageKey);
     } else {
-      await prefs.setString(_estimateStorageKey, draftJson);
+      await localStore.setString(_estimateStorageKey, draftJson);
     }
   }
 
@@ -1665,9 +1667,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
     final ordersJson = _serializeOrdersJson();
     final draftJson = _serializeDraftJson();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ordersStorageKey, ordersJson);
-    await prefs.setString(_estimateStorageKey, draftJson);
+    final localStore = await _appLocalStore;
+    await localStore.setString(_ordersStorageKey, ordersJson);
+    await localStore.setString(_estimateStorageKey, draftJson);
     if (mounted) {
       setState(() {
         _lastLocalSavedAt = DateTime.now();
@@ -2287,9 +2289,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Future<void> _restoreLocalState() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedOrdersJson = prefs.getString(_ordersStorageKey);
-    final savedDraftJson = prefs.getString(_estimateStorageKey);
+    final localStore = await _appLocalStore;
+    final savedOrdersJson = await localStore.getString(_ordersStorageKey);
+    final savedDraftJson = await localStore.getString(_estimateStorageKey);
     if (savedOrdersJson == null && savedDraftJson == null) {
       return;
     }
@@ -2314,8 +2316,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _lastLocalSavedAt = DateTime.now();
       });
     } catch (_) {
-      await prefs.remove(_ordersStorageKey);
-      await prefs.remove(_estimateStorageKey);
+      await localStore.remove(_ordersStorageKey);
+      await localStore.remove(_estimateStorageKey);
     } finally {
       _isRestoringLocalState = false;
     }
@@ -2818,24 +2820,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _selectedStatus = null;
     });
     _schedulePersistence();
-  }
-
-  void _openPrintPreview() {
-    final totalRevenue = _orders.fold<double>(
-      0,
-      (total, order) => total + order.total,
-    );
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return _PrintPreviewSheet(orders: _orders, totalRevenue: totalRevenue);
-      },
-    );
   }
 
   void _openEstimatePrintPreview() {
@@ -3364,7 +3348,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                             (option) => Align(
                               alignment: Alignment.centerLeft,
                               child: Text(
-                                'Sort',
+                                option.label,
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
@@ -3396,7 +3380,32 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ],
             ),
             const SizedBox(height: 16),
-            Text('Live orders', style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              children: [
+                Text(
+                  'Live orders',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    _filteredOrders.length.toString(),
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             if (_filteredOrders.isNotEmpty) ...[
               const SizedBox(height: 12),
               ListView.separated(
@@ -3409,9 +3418,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   final order = _filteredOrders[index];
                   return _OrderCard(
                     order: order,
-                    onView: _isUser
-                        ? () => _openCombinedBillPrintPreviewForOrder(order)
-                        : null,
+                    onPrint: () => _openCombinedBillPrintPreviewForOrder(order),
                     onEdit: _isAdmin ? () => _openEditOrderSheet(order) : null,
                     onDelete: _isAdmin
                         ? () => _confirmDeleteOrder(order)
@@ -4875,20 +4882,32 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           tooltip: 'Save advance entries',
         ),
       if (_isAdmin &&
-          (_selectedSection == AppSection.orders ||
-              _selectedSection == AppSection.estimateCalculator ||
+          (_selectedSection == AppSection.estimateCalculator ||
               _selectedSection == AppSection.advance ||
               _selectedSection == AppSection.actual ||
               _selectedSection == AppSection.items ||
               _selectedSection == AppSection.billPreview))
         IconButton(
-          onPressed: switch (_selectedSection) {
-            AppSection.orders => _openPrintPreview,
-            AppSection.estimateCalculator => _openEstimatePrintPreview,
-            AppSection.advance => _openAdvancePrintPreview,
-            AppSection.actual => _openActualPrintPreview,
-            AppSection.items => _openNewItemsPrintPreview,
-            AppSection.billPreview => _openCombinedBillPrintPreview,
+          onPressed: () {
+            switch (_selectedSection) {
+              case AppSection.orders:
+                return;
+              case AppSection.estimateCalculator:
+                _openEstimatePrintPreview();
+                return;
+              case AppSection.advance:
+                _openAdvancePrintPreview();
+                return;
+              case AppSection.actual:
+                _openActualPrintPreview();
+                return;
+              case AppSection.items:
+                _openNewItemsPrintPreview();
+                return;
+              case AppSection.billPreview:
+                _openCombinedBillPrintPreview();
+                return;
+            }
           },
           icon: const Icon(Icons.print_outlined),
           tooltip: 'Print preview',

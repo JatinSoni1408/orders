@@ -3,108 +3,121 @@ part of '../main.dart';
 class _OrderCard extends StatelessWidget {
   const _OrderCard({
     required this.order,
-    this.onView,
+    this.onPrint,
     this.onEdit,
     this.onDelete,
   });
 
   final Order order;
-  final VoidCallback? onView;
+  final VoidCallback? onPrint;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _DeliveryCountdownPill(deliveryDate: order.deliveryDate),
-                  const SizedBox(height: 8),
-                  Text(
-                    order.customer,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    (order.customerPhone ?? '').trim().isEmpty
-                        ? '-'
-                        : order.customerPhone!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                ],
-              ),
+    final actionButtons = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (onPrint != null) ...[
+          IconButton.filledTonal(
+            onPressed: onPrint,
+            icon: const Icon(Icons.print_outlined, size: 18),
+            tooltip: 'Print preview',
+          ),
+          if (onEdit != null || onDelete != null) const SizedBox(width: 8),
+        ],
+        if (onEdit != null) ...[
+          IconButton.filledTonal(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            tooltip: 'Edit',
+          ),
+          if (onDelete != null) const SizedBox(width: 8),
+        ],
+        if (onDelete != null)
+          IconButton.filledTonal(
+            onPressed: onDelete,
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
             ),
-            const SizedBox(width: 12),
-            Flexible(
-              fit: FlexFit.loose,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    order.deliveryDate == null
-                        ? 'Delivery Date: -'
-                        : 'Delivery Date: ${_formatEntryDate(order.deliveryDate!)}',
-                    textAlign: TextAlign.right,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.grey.shade700,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
+            icon: const Icon(Icons.delete_outline, size: 18),
+            tooltip: 'Delete',
+          ),
+      ],
+    );
+
+    final orderDetails = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _DeliveryCountdownPill(deliveryDate: order.deliveryDate),
+        const SizedBox(height: 8),
+        Text(
+          order.customer,
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          (order.customerPhone ?? '').trim().isEmpty
+              ? '-'
+              : order.customerPhone!,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+        ),
+      ],
+    );
+
+    final actionPane = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          order.deliveryDate == null
+              ? 'Delivery Date: -'
+              : 'Delivery Date: ${_formatEntryDate(order.deliveryDate!)}',
+          textAlign: TextAlign.right,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+        ),
+        const SizedBox(height: 8),
+        Align(alignment: Alignment.centerRight, child: actionButtons),
+      ],
+    );
+
+    return Card(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isCompact = constraints.maxWidth < 760;
+
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: isCompact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (onView != null)
-                        IconButton.filledTonal(
-                          onPressed: onView,
-                          icon: const Icon(Icons.visibility_outlined, size: 18),
-                          tooltip: 'View / Print',
-                        ),
-                      if (onEdit != null) ...[
-                        IconButton.filledTonal(
-                          onPressed: onEdit,
-                          icon: const Icon(Icons.edit_outlined, size: 18),
-                          tooltip: 'Edit',
-                        ),
-                      ],
-                      if (onDelete != null) ...[
-                        if (onEdit != null) const SizedBox(width: 8),
-                        IconButton.filledTonal(
-                          onPressed: onDelete,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Theme.of(
-                              context,
-                            ).colorScheme.errorContainer,
-                            foregroundColor: Theme.of(
-                              context,
-                            ).colorScheme.onErrorContainer,
-                          ),
-                          icon: const Icon(Icons.delete_outline, size: 18),
-                          tooltip: 'Delete',
-                        ),
-                      ],
+                      orderDetails,
+                      const SizedBox(height: 12),
+                      actionPane,
+                    ],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(child: orderDetails),
+                      const SizedBox(width: 24),
+                      SizedBox(width: 250, child: actionPane),
                     ],
                   ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

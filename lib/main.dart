@@ -11,7 +11,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'src/local_storage.dart';
 part 'src/order_models.dart';
 part 'src/order_app.dart';
 part 'src/orders_dashboard.dart';
@@ -58,6 +58,8 @@ String get _platformAppTitle {
       return 'Jewellery Orders';
   }
 }
+
+final Future<AppLocalStore> _appLocalStore = createAppLocalStore();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
