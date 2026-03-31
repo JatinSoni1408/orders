@@ -1,5 +1,94 @@
 part of '../main.dart';
 
+class _PdfPreviewScaffold extends StatefulWidget {
+  const _PdfPreviewScaffold({
+    required this.title,
+    required this.pdfFileName,
+    required this.buildPdf,
+    this.helperText,
+  });
+
+  final String title;
+  final String pdfFileName;
+  final LayoutCallback buildPdf;
+  final String? helperText;
+
+  @override
+  State<_PdfPreviewScaffold> createState() => _PdfPreviewScaffoldState();
+}
+
+class _PdfPreviewScaffoldState extends State<_PdfPreviewScaffold> {
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKeyEvent);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
+    super.dispose();
+  }
+
+  bool _handleKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return false;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.escape) {
+      return false;
+    }
+    final currentRoute = ModalRoute.of(context);
+    if (currentRoute?.isCurrent != true) {
+      return false;
+    }
+    unawaited(Navigator.of(context).maybePop());
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(),
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: Text(widget.title),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.helperText != null) ...[
+              Text(
+                widget.helperText!,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 16),
+            ],
+            Expanded(
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: PdfPreview(
+                  canChangePageFormat: false,
+                  canChangeOrientation: false,
+                  canDebug: false,
+                  allowSharing: false,
+                  pdfFileName: widget.pdfFileName,
+                  build: widget.buildPdf,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _CombinedBillPrintPreviewSheet extends StatelessWidget {
   const _CombinedBillPrintPreviewSheet({
     required this.customerName,
@@ -237,35 +326,10 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: const Text('Order Summary'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'order-summary-preview.pdf',
-                  build: _buildCombinedBillPdf,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _PdfPreviewScaffold(
+      title: 'Order Summary',
+      pdfFileName: 'order-summary-preview.pdf',
+      buildPdf: _buildCombinedBillPdf,
     );
   }
 
@@ -1461,42 +1525,12 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: const Text('Order Estimate PDF Preview'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'estimate-summary-preview.pdf',
-                  build: _buildEstimatePdf,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _PdfPreviewScaffold(
+      title: 'Order Estimate PDF Preview',
+      helperText:
+          'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+      pdfFileName: 'estimate-summary-preview.pdf',
+      buildPdf: _buildEstimatePdf,
     );
   }
 
@@ -1577,6 +1611,16 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
         return _formatWeightFixed3(_truncateWeight3(value));
       }
 
+      String estimateLineWeightText(_EstimateItemDraft item) {
+        return truncatedEstimatedWeightText(
+          item.quantity * item.estimatedWeight,
+        );
+      }
+
+      String estimateLineWeightBreakdownText(_EstimateItemDraft item) {
+        return '[${truncatedEstimatedWeightText(item.estimatedWeight)} X ${item.quantity}]';
+      }
+
       double dynamicColumnWidth(
         String header,
         Iterable<String> values, {
@@ -1617,9 +1661,14 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
       );
       final estimatedWeightColumnWidth = dynamicColumnWidth(
         'EWt / gm',
-        items.map((item) => truncatedEstimatedWeightText(item.estimatedWeight)),
+        items.expand(
+          (item) => [
+            estimateLineWeightText(item),
+            if (item.quantity > 1) estimateLineWeightBreakdownText(item),
+          ],
+        ),
         minWidth: 36,
-        maxWidth: 50,
+        maxWidth: 74,
       );
       var notesColumnWidth = dynamicColumnWidth(
         'Notes',
@@ -1746,6 +1795,42 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                   child: cellText,
                 )
               : cellText,
+        );
+      }
+
+      pw.Widget estimateWeightCell(
+        _EstimateItemDraft item, {
+        required pw.TextStyle style,
+        PdfColor? backgroundColor,
+      }) {
+        final breakdownStyle = pw.TextStyle(
+          fontSize: compactTableFontSize - 1,
+          color: PdfColors.grey700,
+        );
+
+        return pw.Container(
+          alignment: pw.Alignment.centerRight,
+          color: backgroundColor,
+          padding: pw.EdgeInsets.symmetric(
+            horizontal: 4,
+            vertical: tableVerticalPadding,
+          ),
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.end,
+            children: [
+              if (item.quantity > 1)
+                pw.Text(
+                  estimateLineWeightBreakdownText(item),
+                  style: breakdownStyle,
+                  textAlign: pw.TextAlign.right,
+                ),
+              pw.Text(
+                estimateLineWeightText(item),
+                style: style,
+                textAlign: pw.TextAlign.right,
+              ),
+            ],
+          ),
         );
       }
 
@@ -1998,13 +2083,7 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                             style: tableStyle,
                             alignment: pw.Alignment.center,
                           ),
-                          tableCell(
-                            truncatedEstimatedWeightText(
-                              entry.value.estimatedWeight,
-                            ),
-                            style: tableStyle,
-                            alignment: pw.Alignment.centerRight,
-                          ),
+                          estimateWeightCell(entry.value, style: tableStyle),
                           tableCell(
                             entry.value.notesController.text.trim(),
                             style: tableStyle,
@@ -2046,7 +2125,9 @@ class _EstimatePrintPreviewSheet extends StatelessWidget {
                           truncatedEstimatedWeightText(
                             items.fold<double>(
                               0,
-                              (total, item) => total + item.estimatedWeight,
+                              (total, item) =>
+                                  total +
+                                  (item.quantity * item.estimatedWeight),
                             ),
                           ),
                           style: tableHeaderStyle,
@@ -2258,42 +2339,12 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: const Text('Advance PDF Preview'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'advance-preview.pdf',
-                  build: _buildAdvancePdf,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _PdfPreviewScaffold(
+      title: 'Advance PDF Preview',
+      helperText:
+          'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+      pdfFileName: 'advance-preview.pdf',
+      buildPdf: _buildAdvancePdf,
     );
   }
 
@@ -2455,8 +2506,8 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
               pw.Table(
                 border: pw.TableBorder.all(color: PdfColors.grey400),
                 columnWidths: const {
-                  0: pw.FixedColumnWidth(38),
-                  1: pw.FixedColumnWidth(76),
+                  0: pw.FixedColumnWidth(50),
+                  1: pw.FixedColumnWidth(64),
                   2: pw.FixedColumnWidth(60),
                   3: pw.FixedColumnWidth(50),
                   4: pw.FixedColumnWidth(34),
@@ -2555,7 +2606,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 pw.Table(
                   border: pw.TableBorder.all(color: PdfColors.grey400),
                   columnWidths: const {
-                    0: pw.FixedColumnWidth(42),
+                    0: pw.FixedColumnWidth(50),
                     1: pw.FlexColumnWidth(1.8),
                     2: pw.FixedColumnWidth(36),
                     3: pw.FixedColumnWidth(34),
@@ -2688,42 +2739,12 @@ class _ActualPrintPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: const Text('Order PDF Preview'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'actual-preview.pdf',
-                  build: _buildActualPdf,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _PdfPreviewScaffold(
+      title: 'Order PDF Preview',
+      helperText:
+          'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+      pdfFileName: 'actual-preview.pdf',
+      buildPdf: _buildActualPdf,
     );
   }
 
@@ -3523,42 +3544,12 @@ class _NewItemsPrintPreviewSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back),
-        ),
-        title: const Text('New Items PDF Preview'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: PdfPreview(
-                  canChangePageFormat: false,
-                  canChangeOrientation: false,
-                  canDebug: false,
-                  allowSharing: false,
-                  pdfFileName: 'new-items-preview.pdf',
-                  build: _buildNewItemsPdf,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _PdfPreviewScaffold(
+      title: 'New Items PDF Preview',
+      helperText:
+          'Double-click to enlarge on desktop, or pinch to zoom in and out on touch devices.',
+      pdfFileName: 'new-items-preview.pdf',
+      buildPdf: _buildNewItemsPdf,
     );
   }
 

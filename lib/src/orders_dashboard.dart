@@ -124,6 +124,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double _billPreviewLockedGstAddedAmount = 0;
   OrderStatus _estimateStatus = OrderStatus.pending;
   DateTime _estimateDate = DateTime.now();
+  bool _estimateDateFollowsNow = true;
   DateTime _estimateDeliveryDate = DateTime.now();
   double _ratesGold24Rate = 0;
   DateTime? _ratesSyncedAt;
@@ -142,6 +143,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   bool _isRemoteSyncInProgress = false;
   bool _hasRemoteSyncError = false;
   bool _isRemoteRefreshInProgress = false;
+  bool _isExitFlowActive = false;
+  bool _allowImmediateAppExit = false;
 
   bool get _showsLiveEstimateClock =>
       _selectedSection == AppSection.estimateCalculator ||
@@ -191,6 +194,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    HardwareKeyboard.instance.addHandler(_handleAppKeyEvent);
     _attachEstimateFieldListeners();
     for (final item in _estimateItems) {
       _attachEstimateItemListeners(item);
@@ -213,7 +217,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       if (!mounted) {
         return;
       }
-      if (!_showsLiveEstimateClock) {
+      if (!_showsLiveEstimateClock || !_estimateDateFollowsNow) {
         return;
       }
       setState(() {
@@ -511,6 +515,15 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
   }
 
+  @override
+  Future<ui.AppExitResponse> didRequestAppExit() async {
+    if (_allowImmediateAppExit) {
+      return ui.AppExitResponse.exit;
+    }
+    final shouldExit = await _confirmAndPersistExit();
+    return shouldExit ? ui.AppExitResponse.exit : ui.AppExitResponse.cancel;
+  }
+
   List<Order> get _filteredOrders {
     Iterable<Order> results = _orders;
 
@@ -624,11 +637,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   Widget _buildSaveStatusBar() {
     final theme = Theme.of(context);
     final statusTextColor = theme.colorScheme.onPrimary;
-    final statusColor = _hasRemoteSyncError
-        ? theme.colorScheme.error
-        : _isRemoteSyncInProgress
-        ? theme.colorScheme.primary
-        : theme.colorScheme.onSurfaceVariant;
+    final statusColor = statusTextColor;
     final statusIcon = _hasRemoteSyncError
         ? Icons.cloud_off_outlined
         : _isRemoteSyncInProgress
@@ -690,7 +699,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   double get _estimateTotalEstimatedWeight {
     return _estimateItems
         .where((item) => !item.isEmpty)
-        .fold<double>(0, (total, item) => total + item.estimatedWeight);
+        .fold<double>(
+          0,
+          (total, item) => total + (item.quantity * item.estimatedWeight),
+        );
   }
 
   double get _actualTotalGrossWeight {
@@ -1528,6 +1540,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       'customerMobile': _estimateCustomerMobileController.text,
       'alternateMobile': _estimateAlternateMobileController.text,
       'status': _estimateStatus.name,
+      'estimateDate': _estimateDate.toIso8601String(),
+      'estimateDateAutoSync': _estimateDateFollowsNow,
       'deliveryDate': _estimateDeliveryDate.toIso8601String(),
       'advanceItems': _advanceItems.map((item) => item.toJson()).toList(),
       'advanceOldItems': _advanceOldItems.map((item) => item.toJson()).toList(),
@@ -2133,6 +2147,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateStatus = _orderStatusFromName(
       decodedEstimate['status'] as String? ?? OrderStatus.pending.name,
     );
+    _estimateDate =
+        _dateTimeFromJson(decodedEstimate['estimateDate']) ?? DateTime.now();
+    _estimateDateFollowsNow =
+        decodedEstimate['estimateDateAutoSync'] as bool? ?? true;
+    if (_estimateDateFollowsNow) {
+      _estimateDate = DateTime.now();
+    }
     _estimateDeliveryDate =
         _dateTimeFromJson(decodedEstimate['deliveryDate']) ?? DateTime.now();
     _editingOrderId = decodedEstimate['editingOrderId'] as String?;
@@ -2343,6 +2364,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _editingOrderId = null;
     _editingOrderCreatedAt = null;
     _estimateDate = DateTime.now();
+    _estimateDateFollowsNow = true;
     _estimateDeliveryDate = DateTime.now();
     _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = '3';
@@ -2405,7 +2427,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   void _loadEstimateFromOrder(Order order) {
     _editingOrderId = order.id;
     _editingOrderCreatedAt = order.createdAt;
-    _estimateDate = DateTime.now();
+    _estimateDate = _estimateOrderDateFromOrder(order);
+    _estimateDateFollowsNow = false;
     _estimateDeliveryDate = order.deliveryDate ?? DateTime.now();
     _estimatePurityController.text = _lockedEstimatePurity;
     _estimateGstController.text = (order.estimateGst ?? 3).toString();
@@ -2587,6 +2610,34 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     for (final item in _newItems) {
       _attachNewItemListeners(item);
     }
+  }
+
+  DateTime _estimateOrderDateFromOrder(Order order) {
+    if (order.items.isNotEmpty) {
+      return order.items.first.date;
+    }
+    return order.createdAt;
+  }
+
+  DateTime _mergeEstimateDateWithCurrentTime(DateTime selectedDate) {
+    return DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      _estimateDate.hour,
+      _estimateDate.minute,
+      _estimateDate.second,
+      _estimateDate.millisecond,
+      _estimateDate.microsecond,
+    );
+  }
+
+  void _setEstimateDate(DateTime selectedDate) {
+    setState(() {
+      _estimateDate = _mergeEstimateDateWithCurrentTime(selectedDate);
+      _estimateDateFollowsNow = false;
+    });
+    _schedulePersistence();
   }
 
   bool _validateEstimateForm() {
@@ -3185,6 +3236,28 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return false;
   }
 
+  bool _stepBackAdminSection() {
+    final previousSection = switch (_selectedSection) {
+      AppSection.billPreview => AppSection.items,
+      AppSection.items => AppSection.actual,
+      AppSection.actual => AppSection.advance,
+      AppSection.advance => AppSection.estimateCalculator,
+      AppSection.estimateCalculator => AppSection.orders,
+      AppSection.orders => null,
+    };
+    if (previousSection == null) {
+      return false;
+    }
+    setState(() {
+      _selectedSection = previousSection;
+      if (previousSection == AppSection.orders) {
+        _selectedStatus = null;
+      }
+    });
+    _schedulePersistence();
+    return true;
+  }
+
   void _resetEstimateForm() {
     setState(() {
       _clearEstimateForm();
@@ -3270,7 +3343,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         return AlertDialog(
           title: const Text('Exit App?'),
           content: const Text(
-            'Closing the app will reset the current in-memory data. Do you want to exit?',
+            'Exit the application? Any unsaved changes will be saved before the app closes.',
           ),
           actions: [
             TextButton(
@@ -3291,6 +3364,113 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
 
     return shouldExit ?? false;
+  }
+
+  Future<bool> _confirmAndPersistExit() async {
+    final shouldExit = await _confirmExitApp();
+    if (!shouldExit) {
+      return false;
+    }
+    _persistDebounceTimer?.cancel();
+    await _persistLocalState(syncImmediately: true);
+    return true;
+  }
+
+  bool _isEditableTextFocused() {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) {
+      return false;
+    }
+    if (focusContext.widget is EditableText) {
+      return true;
+    }
+    return focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  bool _isDashboardRouteCurrent() {
+    final currentRoute = ModalRoute.of(context);
+    return currentRoute?.isCurrent == true;
+  }
+
+  Future<void> _handleExitShortcut() async {
+    if (_isEditableTextFocused()) {
+      return;
+    }
+    if (!_isDashboardRouteCurrent()) {
+      return;
+    }
+    await _runExitFlow();
+  }
+
+  Future<void> _runExitFlow({bool onlyFromOrders = false}) async {
+    if (_isExitFlowActive) {
+      return;
+    }
+    if (onlyFromOrders && _selectedSection != AppSection.orders) {
+      return;
+    }
+    final currentRoute = ModalRoute.of(context);
+    if (currentRoute?.isCurrent != true) {
+      return;
+    }
+    _isExitFlowActive = true;
+    try {
+      final shouldExit = await _confirmAndPersistExit();
+      if (shouldExit) {
+        await _requestAppClose();
+      }
+    } finally {
+      _isExitFlowActive = false;
+    }
+  }
+
+  Future<void> _requestAppClose() async {
+    final isDesktopPlatform =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.linux);
+    if (isDesktopPlatform) {
+      await ServicesBinding.instance.exitApplication(ui.AppExitType.required);
+      return;
+    }
+    _allowImmediateAppExit = true;
+    try {
+      await SystemNavigator.pop();
+    } finally {
+      _allowImmediateAppExit = false;
+    }
+  }
+
+  Future<void> _handleEscapeShortcut() async {
+    if (!_isDashboardRouteCurrent()) {
+      return;
+    }
+    if (_stepBackAdminSection()) {
+      return;
+    }
+    await _runExitFlow(onlyFromOrders: true);
+  }
+
+  bool _handleAppKeyEvent(KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return false;
+    }
+    if (!_isDashboardRouteCurrent()) {
+      return false;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      unawaited(_handleEscapeShortcut());
+      return true;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyQ) {
+      if (_isEditableTextFocused()) {
+        return false;
+      }
+      unawaited(_handleExitShortcut());
+      return true;
+    }
+    return false;
   }
 
   Widget _buildOrdersBody(double contentTopPadding) {
@@ -3434,195 +3614,509 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Widget _buildEstimateCalculatorBody(double contentTopPadding) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            DateFormat(
-                              'dd/MM/yy HH:mm:ss',
-                            ).format(_estimateDate),
-                            style: Theme.of(context).textTheme.bodyLarge,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DateField(
-                            date: _estimateDeliveryDate,
-                            labelText: 'Delivery Date',
-                            onDateSelected: (selected) {
-                              setState(() {
-                                _estimateDeliveryDate = selected;
-                              });
-                              _schedulePersistence();
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateCustomerNameFocusNode,
-                            controller: _estimateCustomerNameController,
-                            decoration: InputDecoration(
-                              labelText: 'Name',
-                              errorText: _estimateNameError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateCustomerMobileFocusNode,
-                            controller: _estimateCustomerMobileController,
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9]'),
-                              ),
-                              LengthLimitingTextInputFormatter(10),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: 'Whatsapp Number',
-                              errorText: _estimateMobileError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isDesktop = constraints.maxWidth >= 1100;
+        final horizontalPadding = isDesktop ? 24.0 : 16.0;
+
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              contentTopPadding,
+              horizontalPadding,
+              32,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: isDesktop ? 1480 : 920),
+                child: isDesktop
+                    ? _buildEstimateCalculatorDesktopLayout()
+                    : _buildEstimateCalculatorMobileLayout(),
               ),
             ),
-            const SizedBox(height: 20),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEstimateCalculatorMobileLayout() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildEstimateDetailsCard(isDesktop: false),
+        const SizedBox(height: 20),
+        _buildEstimatePricingRow(spacing: 8),
+        const SizedBox(height: 20),
+        _buildEstimateItemsSection(isDesktop: false),
+        const SizedBox(height: 12),
+        _buildEstimateActionButtons(isDesktop: false),
+      ],
+    );
+  }
+
+  Widget _buildEstimateCalculatorDesktopLayout() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildEstimateDetailsCard(isDesktop: true),
+              const SizedBox(height: 20),
+              _buildEstimateItemsSection(isDesktop: true),
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        SizedBox(width: 360, child: _buildEstimateDesktopSummaryCard()),
+      ],
+    );
+  }
+
+  Widget _buildEstimateDetailsCard({required bool isDesktop}) {
+    final deliveryDateColor = Theme.of(context).colorScheme.tertiary;
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800);
+
+    final nameField = TextField(
+      focusNode: _estimateCustomerNameFocusNode,
+      controller: _estimateCustomerNameController,
+      decoration: InputDecoration(
+        labelText: 'Name',
+        errorText: _estimateNameError,
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+    final mobileField = TextField(
+      focusNode: _estimateCustomerMobileFocusNode,
+      controller: _estimateCustomerMobileController,
+      keyboardType: TextInputType.phone,
+      inputFormatters: [
+        FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+        LengthLimitingTextInputFormatter(10),
+      ],
+      decoration: InputDecoration(
+        labelText: 'Whatsapp Number',
+        errorText: _estimateMobileError,
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+    final purityField = TextField(
+      controller: _estimatePurityController,
+      decoration: const InputDecoration(labelText: 'Purity', isDense: true),
+      enabled: false,
+    );
+    final makingField = DropdownButtonFormField<String>(
+      key: ValueKey('estimate-making-$_selectedEstimateMakingOption'),
+      initialValue: _selectedEstimateMakingOption,
+      decoration: const InputDecoration(
+        labelText: 'Making',
+        suffixText: '%',
+        isDense: true,
+      ),
+      items: _estimateMakingOptions
+          .map((option) => DropdownMenuItem(value: option, child: Text(option)))
+          .toList(),
+      onChanged: (value) {
+        if (value == null) {
+          return;
+        }
+        _estimateMakingController.text = value;
+        setState(() {});
+        _schedulePersistence();
+      },
+    );
+    final gstField = TextField(
+      controller: _estimateGstController,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: const InputDecoration(
+        labelText: 'GST: 3%',
+        suffixText: '%',
+        isDense: true,
+      ),
+      enabled: false,
+    );
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isDesktop ? 20 : 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(child: Text('Customer Details', style: titleStyle)),
+          const SizedBox(height: 12),
+          if (isDesktop) ...[
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _estimatePurityController,
-                    decoration: const InputDecoration(
-                      labelText: 'Purity',
-                      isDense: true,
-                    ),
-                    enabled: false,
+                  child: _EditableDateField(
+                    date: _estimateDate,
+                    labelText: 'Order Date',
+                    onDateSelected: _setEstimateDate,
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: ValueKey(
-                      'estimate-making-$_selectedEstimateMakingOption',
-                    ),
-                    initialValue: _selectedEstimateMakingOption,
-                    decoration: const InputDecoration(
-                      labelText: 'Making',
-                      suffixText: '%',
-                      isDense: true,
-                    ),
-                    items: _estimateMakingOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(option),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value == null) {
-                        return;
-                      }
-                      _estimateMakingController.text = value;
-                      setState(() {});
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 220,
+                  child: _DateField(
+                    date: _estimateDeliveryDate,
+                    labelText: 'Delivery Date',
+                    valueStyle: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(
+                          color: deliveryDateColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                    labelStyle: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: deliveryDateColor),
+                    iconColor: deliveryDateColor,
+                    borderColor: deliveryDateColor,
+                    onDateSelected: (selected) {
+                      setState(() {
+                        _estimateDeliveryDate = selected;
+                      });
                       _schedulePersistence();
                     },
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _estimateGstController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'GST: 3%',
-                      suffixText: '%',
-                      isDense: true,
-                    ),
-                    enabled: false,
-                  ),
-                ),
               ],
             ),
             const SizedBox(height: 20),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Estimate Items',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+                Expanded(child: nameField),
+                const SizedBox(width: 12),
+                Expanded(child: mobileField),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: purityField),
+                const SizedBox(width: 12),
+                Expanded(child: makingField),
+                const SizedBox(width: 12),
+                Expanded(child: gstField),
+              ],
+            ),
+          ] else ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: _EditableDateField(
+                    date: _estimateDate,
+                    labelText: 'Order Date',
+                    onDateSelected: _setEstimateDate,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _DateField(
+                    date: _estimateDeliveryDate,
+                    labelText: 'Delivery Date',
+                    valueStyle: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(
+                          color: deliveryDateColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                    labelStyle: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: deliveryDateColor),
+                    iconColor: deliveryDateColor,
+                    borderColor: deliveryDateColor,
+                    onDateSelected: (selected) {
+                      setState(() {
+                        _estimateDeliveryDate = selected;
+                      });
+                      _schedulePersistence();
+                    },
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            ...List.generate(_estimateItems.length, (index) {
-              final item = _estimateItems[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _EstimateItemEditor(
-                  index: index + 1,
-                  item: item,
-                  onChanged: () => setState(() {}),
-                  onRemove: _estimateItems.length == 1
-                      ? null
-                      : () {
-                          setState(() {
-                            final removed = _estimateItems.removeAt(index);
-                            removed.dispose();
-                          });
-                          _schedulePersistence();
-                        },
-                ),
-              );
-            }),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: nameField),
+                const SizedBox(width: 12),
+                Expanded(child: mobileField),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstimatePricingRow({required double spacing}) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _estimatePurityController,
+              decoration: const InputDecoration(
+                labelText: 'Purity',
+                isDense: true,
+              ),
+              enabled: false,
+            ),
+          ),
+          SizedBox(width: spacing),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              key: ValueKey('estimate-making-$_selectedEstimateMakingOption'),
+              initialValue: _selectedEstimateMakingOption,
+              decoration: const InputDecoration(
+                labelText: 'Making',
+                suffixText: '%',
+                isDense: true,
+              ),
+              items: _estimateMakingOptions
+                  .map(
+                    (option) =>
+                        DropdownMenuItem(value: option, child: Text(option)),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value == null) {
+                  return;
+                }
+                _estimateMakingController.text = value;
+                setState(() {});
+                _schedulePersistence();
+              },
+            ),
+          ),
+          SizedBox(width: spacing),
+          Expanded(
+            child: TextField(
+              controller: _estimateGstController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'GST: 3%',
+                suffixText: '%',
+                isDense: true,
+              ),
+              enabled: false,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstimateItemsHeadingCard({required bool isDesktop}) {
+    final subtitleStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700);
+
+    return Column(
+      children: [
+        Text(
+          'Estimate Items',
+          textAlign: TextAlign.center,
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        if (isDesktop) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Add each design with quantity, purity, estimated weight, and notes.',
+            textAlign: TextAlign.center,
+            style: subtitleStyle,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildEstimateItemsSection({required bool isDesktop}) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isDesktop ? 20 : 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(child: _buildEstimateItemsHeadingCard(isDesktop: isDesktop)),
+          const SizedBox(height: 12),
+          ..._buildEstimateItemEditors(),
+          const SizedBox(height: 4),
+          _buildEstimateAddItemButton(),
+          const SizedBox(height: 12),
+          _buildEstimateWeightRangeField(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstimateAddItemButton() {
+    return Center(
+      child: FractionallySizedBox(
+        widthFactor: 0.5,
+        child: FilledButton.icon(
+          onPressed: _addEstimateItem,
+          icon: const Icon(Icons.add),
+          label: const Text('Add item'),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEstimateWeightRangeField() {
+    return TextField(
+      controller: _estimateWeightRangeController,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+      decoration: const InputDecoration(
+        labelText: 'Estimated Weight Range',
+        hintText: 'Add extra weight, e.g. 2.080',
+        suffixText: 'gm',
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
+  List<Widget> _buildEstimateItemEditors() {
+    return List.generate(_estimateItems.length, (index) {
+      final item = _estimateItems[index];
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _EstimateItemEditor(
+          index: index + 1,
+          item: item,
+          onChanged: () => setState(() {}),
+          onReset: _estimateItems.length == 1
+              ? () {
                   setState(() {
-                    final item = _EstimateItemDraft();
-                    _estimateItems.add(item);
-                    _attachEstimateItemListeners(item);
+                    item.reset();
+                  });
+                  _schedulePersistence();
+                }
+              : null,
+          onRemove: _estimateItems.length == 1
+              ? null
+              : () {
+                  setState(() {
+                    final removed = _estimateItems.removeAt(index);
+                    removed.dispose();
                   });
                   _schedulePersistence();
                 },
-                icon: const Icon(Icons.add),
-                label: const Text('Add item'),
-              ),
+        ),
+      );
+    });
+  }
+
+  Widget _buildEstimateDesktopSummaryCard() {
+    final subtitleStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700);
+    final deliveryDateColor = Theme.of(context).colorScheme.tertiary;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Estimate Summary',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'The right panel keeps totals and actions visible while you edit items.',
+              style: subtitleStyle,
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildEstimateMetricTile(
+                    label: 'Designs',
+                    value: _sortedEstimateItems.length.toString(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildEstimateMetricTile(
+                    label: 'Quantity',
+                    value: _estimateTotalQuantity.toString(),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildEstimateMetricTile(
+                    label: 'Weight',
+                    value:
+                        '${_formatWeightFixed3(_estimateTotalEstimatedWeight)} gm',
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildEstimateMetricTile(
+                    label: 'Making',
+                    value: '$_selectedEstimateMakingOption%',
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 28),
+            _EstimateSummaryRow(label: 'Purity', value: _estimatePurity),
+            const SizedBox(height: 8),
+            _EstimateSummaryRow(
+              label: 'GST',
+              value: '${_estimateGst.toStringAsFixed(2)}%',
+            ),
+            const SizedBox(height: 8),
+            _EstimateSummaryRow(
+              label: 'Delivery Date',
+              value: _estimateDeliveryDateLabel,
+              textColor: deliveryDateColor,
+            ),
+            const SizedBox(height: 8),
+            _EstimateSummaryRow(
+              label: 'Live Range',
+              value: '$_estimateWeightRangeLabel gm',
+              emphasize: true,
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: _estimateWeightRangeController,
               keyboardType: const TextInputType.numberWithOptions(
@@ -3631,43 +4125,82 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               inputFormatters: [
                 FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
               ],
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 labelText: 'Estimated Weight Range',
                 hintText: 'Add extra weight, e.g. 2.080',
                 suffixText: 'gm',
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _saveEstimateOrder,
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(
-                      _isEditingEstimate ? 'Update Order' : 'Save Order',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _resetEstimateForm,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      foregroundColor: Theme.of(context).colorScheme.onError,
-                    ),
-                    icon: const Icon(Icons.restart_alt),
-                    label: const Text('Reset'),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 8),
+            Text(
+              'Tip: enter only the extra buffer. The live range updates automatically.',
+              style: subtitleStyle,
             ),
+            const SizedBox(height: 20),
+            _buildEstimateActionButtons(isDesktop: true),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildEstimateMetricTile({
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstimateActionButtons({required bool isDesktop}) {
+    final resetButton = FilledButton.icon(
+      onPressed: _resetEstimateForm,
+      style: FilledButton.styleFrom(
+        backgroundColor: Theme.of(context).colorScheme.error,
+        foregroundColor: Theme.of(context).colorScheme.onError,
+      ),
+      icon: const Icon(Icons.restart_alt),
+      label: const Text('Reset'),
+    );
+
+    if (isDesktop) {
+      return SizedBox(width: double.infinity, child: resetButton);
+    }
+
+    return SizedBox(width: double.infinity, child: resetButton);
+  }
+
+  void _addEstimateItem() {
+    setState(() {
+      final item = _EstimateItemDraft();
+      _estimateItems.add(item);
+      _attachEstimateItemListeners(item);
+    });
+    _schedulePersistence();
   }
 
   Widget _buildActualBody(double contentTopPadding) {
@@ -3861,181 +4394,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ),
             ),
             const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Summary',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Divider(color: Colors.grey.shade300, height: 1),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'Purity',
-                            value: _estimatePurity,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'Making',
-                            value: _estimateMaking.toStringAsFixed(2),
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _EstimateSummaryInlineItem(
-                            label: 'GST',
-                            value: '${_estimateGst.toStringAsFixed(2)}%',
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 24),
-                    if (_sortedEstimateItems.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Table(
-                          defaultColumnWidth: const IntrinsicColumnWidth(),
-                          border: TableBorder.all(color: Colors.grey),
-                          children: [
-                            TableRow(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade200,
-                              ),
-                              children: const [
-                                _EstimateTableCell(
-                                  'Serial No.',
-                                  isHeader: true,
-                                ),
-                                _EstimateTableCell('Purity', isHeader: true),
-                                _EstimateTableCell('Item Name', isHeader: true),
-                                _EstimateTableCell('Quantity', isHeader: true),
-                                _EstimateTableCell(
-                                  'Gross Weight',
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell(
-                                  'Less Weight',
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell(
-                                  'Nett Weight',
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell('Notes', isHeader: true),
-                              ],
-                            ),
-                            ..._sortedEstimateItems.asMap().entries.map(
-                              (entry) => TableRow(
-                                children: [
-                                  _EstimateTableCell('${entry.key + 1}'),
-                                  _EstimateTableCell(
-                                    entry.value.purityController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.nameController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.quantityController.text.trim(),
-                                  ),
-                                  _EstimateTableCell(
-                                    _formatWeightFixed3(
-                                      entry.value.grossWeight,
-                                    ),
-                                    textAlign: TextAlign.right,
-                                  ),
-                                  _EstimateTableCell(
-                                    _formatWeight3(entry.value.lessWeight),
-                                    textAlign: TextAlign.right,
-                                  ),
-                                  _EstimateTableCell(
-                                    _formatWeightFixed3(
-                                      entry.value.actualNetWeight,
-                                    ),
-                                    textAlign: TextAlign.right,
-                                  ),
-                                  _EstimateTableCell(
-                                    entry.value.notesController.text.trim(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            TableRow(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade100,
-                              ),
-                              children: [
-                                const _EstimateTableCell(''),
-                                const _EstimateTableCell(''),
-                                const _EstimateTableCell(
-                                  'Total',
-                                  isHeader: true,
-                                ),
-                                _EstimateTableCell(
-                                  _estimateTotalQuantity.toString(),
-                                  isHeader: true,
-                                ),
-                                _EstimateTableCell(
-                                  _formatWeightFixed3(_actualTotalGrossWeight),
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell(
-                                  _formatWeight3(_actualTotalLessWeight),
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                _EstimateTableCell(
-                                  _formatWeightFixed3(_actualTotalNetWeight),
-                                  isHeader: true,
-                                  textAlign: TextAlign.right,
-                                ),
-                                const _EstimateTableCell(''),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _EstimateSummaryRow(
-                        label: 'Actual Nett Weight',
-                        value:
-                            '${_formatWeightFixed3(_actualTotalNetWeight)} gm',
-                        emphasize: true,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Divider(color: Colors.grey.shade300, height: 1),
-                    const SizedBox(height: 12),
-                    _EstimateSummaryRow(
-                      label: 'Delivery Date',
-                      value: _estimateDeliveryDateLabel,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -4071,118 +4429,333 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return SafeArea(
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Advance Entries',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Customer: $_estimateCustomerName',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            ...List.generate(_advanceItems.length, (index) {
-              final item = _advanceItems[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _AdvanceValuationEditor(
-                  index: index + 1,
-                  item: item,
-                  onChanged: () {
-                    setState(() {});
-                    _schedulePersistence();
-                  },
-                  onRemove: _advanceItems.length == 1
-                      ? null
-                      : () {
-                          setState(() {
-                            final removed = _advanceItems.removeAt(index);
-                            removed.dispose();
-                          });
-                          _schedulePersistence();
-                        },
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1120),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildAdvanceOverviewCard(),
+                const SizedBox(height: 20),
+                _buildAdvanceSectionWrapper(
+                  title: 'Advance Entries',
+                  subtitle:
+                      'Record payment mode, rate, and net weight for each advance entry.',
+                  child: Column(
+                    children: [
+                      ...List.generate(_advanceItems.length, (index) {
+                        final item = _advanceItems[index];
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            bottom: index == _advanceItems.length - 1 ? 0 : 12,
+                          ),
+                          child: _AdvanceValuationEditor(
+                            index: index + 1,
+                            item: item,
+                            onChanged: () {
+                              setState(() {});
+                              _schedulePersistence();
+                            },
+                            onRemove: _advanceItems.length == 1
+                                ? null
+                                : () {
+                                    setState(() {
+                                      final removed = _advanceItems.removeAt(
+                                        index,
+                                      );
+                                      removed.dispose();
+                                    });
+                                    _schedulePersistence();
+                                  },
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.center,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 280),
+                          child: FilledButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                final item = _AdvanceValuationDraft();
+                                _advanceItems.add(item);
+                                _attachAdvanceItemListeners(item);
+                              });
+                              _schedulePersistence();
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add advance item'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            }),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    final item = _AdvanceValuationDraft();
-                    _advanceItems.add(item);
-                    _attachAdvanceItemListeners(item);
-                  });
-                  _schedulePersistence();
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add advance item'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Old Items',
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            ...List.generate(_advanceOldItems.length, (index) {
-              final item = _advanceOldItems[index];
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _AdvanceOldItemEditor(
-                  index: index + 1,
-                  item: item,
-                  onChanged: () {
-                    setState(() {});
-                    _schedulePersistence();
-                  },
-                  onRemove: _advanceOldItems.length == 1
-                      ? null
-                      : () {
-                          setState(() {
-                            final removed = _advanceOldItems.removeAt(index);
-                            removed.dispose();
-                          });
-                          _schedulePersistence();
-                        },
+                const SizedBox(height: 20),
+                _buildAdvanceSectionWrapper(
+                  title: 'Old Items',
+                  subtitle:
+                      'Track returned items and their computed advance conversion values.',
+                  child: Column(
+                    children: [
+                      ...List.generate(_advanceOldItems.length, (index) {
+                        final item = _advanceOldItems[index];
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            bottom:
+                                index == _advanceOldItems.length - 1 ? 0 : 12,
+                          ),
+                          child: _AdvanceOldItemEditor(
+                            index: index + 1,
+                            item: item,
+                            onChanged: () {
+                              setState(() {});
+                              _schedulePersistence();
+                            },
+                            onRemove: _advanceOldItems.length == 1
+                                ? null
+                                : () {
+                                    setState(() {
+                                      final removed = _advanceOldItems.removeAt(
+                                        index,
+                                      );
+                                      removed.dispose();
+                                    });
+                                    _schedulePersistence();
+                                  },
+                          ),
+                        );
+                      }),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.center,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 280),
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                final item = _AdvanceOldItemDraft();
+                                _advanceOldItems.add(item);
+                                _attachAdvanceOldItemListeners(item);
+                              });
+                              _schedulePersistence();
+                            },
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add old item'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              );
-            }),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () {
-                  setState(() {
-                    final item = _AdvanceOldItemDraft();
-                    _advanceOldItems.add(item);
-                    _attachAdvanceOldItemListeners(item);
-                  });
-                  _schedulePersistence();
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add old item'),
-              ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: _resetAdvanceForm,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
+                    minimumSize: const Size.fromHeight(52),
+                  ),
+                  icon: const Icon(Icons.restart_alt),
+                  label: const Text('Reset Advance'),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _resetAdvanceForm,
-              style: FilledButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.error,
-                foregroundColor: Theme.of(context).colorScheme.onError,
-                minimumSize: const Size.fromHeight(48),
-              ),
-              icon: const Icon(Icons.restart_alt),
-              label: const Text('Reset Advance'),
-            ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildAdvanceOverviewCard() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final customerName = _estimateCustomerName.trim().isEmpty
+        ? 'Walk-in customer'
+        : _estimateCustomerName;
+    final metrics = [
+      (
+        label: 'Advance Entries',
+        value: _advanceItems.length.toString(),
+        icon: Icons.account_balance_wallet_outlined,
+      ),
+      (
+        label: 'Old Items',
+        value: _advanceOldItems.length.toString(),
+        icon: Icons.history_toggle_off_outlined,
+      ),
+      (
+        label: 'Total Amount',
+        value: _formatCurrency(_advanceCombinedAmount),
+        icon: Icons.currency_rupee_outlined,
+      ),
+      (
+        label: 'Net Weight',
+        value: '${_formatWeightFixed3(_billPreviewAdvanceNetWeight)} gm',
+        icon: Icons.scale_outlined,
+      ),
+    ];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Advance',
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Manage advance entries and returned items without changing the current order flow.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 18),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer.withValues(alpha: 0.42),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: colorScheme.primary.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(Icons.person_outline, color: colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Customer',
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        customerName,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: metrics
+                .map(
+                  (metric) => _buildAdvanceMetricChip(
+                    label: metric.label,
+                    value: metric.value,
+                    icon: metric.icon,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdvanceMetricChip({
+    required String label,
+    required String value,
+    required IconData icon,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 180),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: colorScheme.primary),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAdvanceSectionWrapper({
+    required String title,
+    required String subtitle,
+    required Widget child,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 18),
+          child,
+        ],
       ),
     );
   }
@@ -4782,6 +5355,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    HardwareKeyboard.instance.removeHandler(_handleAppKeyEvent);
     _estimateClockTimer?.cancel();
     _persistDebounceTimer?.cancel();
     _firestoreSyncDebounceTimer?.cancel();
@@ -4940,108 +5514,107 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         if (_stepBackOrdersTab()) {
           return;
         }
-        final shouldExit = await _confirmExitApp();
+        final shouldExit = await _confirmAndPersistExit();
         if (shouldExit) {
-          _persistDebounceTimer?.cancel();
-          await _persistLocalState(syncImmediately: true);
-          SystemNavigator.pop();
+          await _requestAppClose();
         }
       },
       child: Scaffold(
-        appBar: AppBar(
-          leading: _isAdmin && _selectedSection != AppSection.orders
-              ? IconButton(
-                  onPressed: () {
-                    setState(() {
-                      _selectedSection = AppSection.orders;
-                      _selectedStatus = null;
-                    });
-                    _schedulePersistence();
-                  },
-                  icon: const Icon(Icons.arrow_back),
-                  tooltip: 'Back to orders',
-                )
-              : null,
-          title: Text(appBarTitle),
-          actions: appBarActions,
-          bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(28),
-            child: _buildSaveStatusBar(),
-          ),
-        ),
-        floatingActionButton: _isAdmin && _selectedSection == AppSection.orders
-            ? FloatingActionButton.extended(
-                onPressed: _openAddOrderSheet,
-                icon: const Icon(Icons.add),
-                label: const Text('New order'),
-              )
-            : null,
-        bottomNavigationBar: !_showAdminEditNavigation
-            ? null
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_selectedSection == AppSection.billPreview)
-                    _buildBillPreviewStickyBar(),
-                  NavigationBar(
-                    selectedIndex: _selectedSection.index,
-                    onDestinationSelected: (index) {
-                      final nextSection = AppSection.values[index];
-                      if (_selectedSection == nextSection) {
-                        return;
-                      }
+          appBar: AppBar(
+            leading: _isAdmin && _selectedSection != AppSection.orders
+                ? IconButton(
+                    onPressed: () {
                       setState(() {
-                        _selectedSection = nextSection;
-                        if (nextSection == AppSection.orders) {
-                          _selectedStatus = null;
-                        }
+                        _selectedSection = AppSection.orders;
+                        _selectedStatus = null;
                       });
                       _schedulePersistence();
                     },
-                    destinations: const [
-                      NavigationDestination(
-                        icon: Icon(Icons.receipt_long_outlined),
-                        label: 'Orders',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.calculate_outlined),
-                        label: 'Estimate',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.account_balance_wallet_outlined),
-                        label: 'Advance',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.scale_outlined),
-                        label: 'Actual',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.add_box_outlined),
-                        label: 'New Items',
-                      ),
-                      NavigationDestination(
-                        icon: Icon(Icons.receipt_long_outlined),
-                        label: 'Summary',
-                      ),
-                    ],
+                    icon: const Icon(Icons.arrow_back),
+                    tooltip: 'Back to orders',
+                  )
+                : null,
+            title: Text(appBarTitle),
+            actions: appBarActions,
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(28),
+              child: _buildSaveStatusBar(),
+            ),
+          ),
+          floatingActionButton:
+              _isAdmin && _selectedSection == AppSection.orders
+              ? FloatingActionButton.extended(
+                  onPressed: _openAddOrderSheet,
+                  icon: const Icon(Icons.add),
+                  label: const Text('New order'),
+                )
+              : null,
+          bottomNavigationBar: !_showAdminEditNavigation
+              ? null
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_selectedSection == AppSection.billPreview)
+                      _buildBillPreviewStickyBar(),
+                    NavigationBar(
+                      selectedIndex: _selectedSection.index,
+                      onDestinationSelected: (index) {
+                        final nextSection = AppSection.values[index];
+                        if (_selectedSection == nextSection) {
+                          return;
+                        }
+                        setState(() {
+                          _selectedSection = nextSection;
+                          if (nextSection == AppSection.orders) {
+                            _selectedStatus = null;
+                          }
+                        });
+                        _schedulePersistence();
+                      },
+                      destinations: const [
+                        NavigationDestination(
+                          icon: Icon(Icons.receipt_long_outlined),
+                          label: 'Orders',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.calculate_outlined),
+                          label: 'Estimate',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.account_balance_wallet_outlined),
+                          label: 'Advance',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.scale_outlined),
+                          label: 'Actual',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.add_box_outlined),
+                          label: 'New Items',
+                        ),
+                        NavigationDestination(
+                          icon: Icon(Icons.receipt_long_outlined),
+                          label: 'Summary',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+          body: _isUser
+              ? _buildOrdersBody(contentTopPadding)
+              : switch (_selectedSection) {
+                  AppSection.orders => _buildOrdersBody(contentTopPadding),
+                  AppSection.estimateCalculator => _buildEstimateCalculatorBody(
+                    contentTopPadding,
                   ),
-                ],
-              ),
-        body: _isUser
-            ? _buildOrdersBody(contentTopPadding)
-            : switch (_selectedSection) {
-                AppSection.orders => _buildOrdersBody(contentTopPadding),
-                AppSection.estimateCalculator => _buildEstimateCalculatorBody(
-                  contentTopPadding,
-                ),
-                AppSection.advance => _buildAdvanceBody(contentTopPadding),
-                AppSection.actual => _buildActualBody(contentTopPadding),
-                AppSection.items => _buildItemsBody(contentTopPadding),
-                AppSection.billPreview => _buildBillPreviewBody(
-                  contentTopPadding,
-                ),
-              },
-      ),
+                  AppSection.advance => _buildAdvanceBody(contentTopPadding),
+                  AppSection.actual => _buildActualBody(contentTopPadding),
+                  AppSection.items => _buildItemsBody(contentTopPadding),
+                  AppSection.billPreview => _buildBillPreviewBody(
+                    contentTopPadding,
+                  ),
+                },
+        ),
     );
   }
 }
@@ -5128,8 +5701,8 @@ class _EstimateItemDraft {
       return null;
     }
     final quantityValue = int.tryParse(quantityController.text.trim());
-    if (quantityValue == null || quantityValue <= 0) {
-      return 'Enter quantity';
+    if (quantityValue == null || quantityValue < 1 || quantityValue > 100) {
+      return 'Select quantity';
     }
     return null;
   }
@@ -5188,6 +5761,21 @@ class _EstimateItemDraft {
 
   bool get hasActualWeight => grossWeight > 0 || lessWeight > 0;
 
+  void reset() {
+    nameController.clear();
+    purityController.text = '22K';
+    quantityController.text = '1';
+    estimatedNettWeightController.clear();
+    grossWeightController.clear();
+    lessWeightController.clear();
+    sizeController.clear();
+    lengthController.clear();
+    notesController.clear();
+    showNameError = false;
+    showQuantityError = false;
+    showWeightError = false;
+  }
+
   void dispose() {
     nameController.dispose();
     purityController.dispose();
@@ -5206,148 +5794,192 @@ class _EstimateItemEditor extends StatelessWidget {
     required this.index,
     required this.item,
     required this.onChanged,
+    this.onReset,
     this.onRemove,
   });
 
   final int index;
   final _EstimateItemDraft item;
   final VoidCallback onChanged;
+  final VoidCallback? onReset;
   final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
     const purityOptions = ['22K', '18K', 'Silver'];
+    final quantityOptions = List<int>.generate(100, (index) => index + 1);
+
+    final nameField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showNameError = true;
+          onChanged();
+        }
+      },
+      child: TextField(
+        controller: item.nameController,
+        inputFormatters: [_WordCapitalizeFormatter()],
+        decoration: InputDecoration(
+          labelText: 'Item Name',
+          errorText: item.nameError,
+        ),
+        onChanged: (_) => onChanged(),
+      ),
+    );
+    final purityField = DropdownButtonFormField<String>(
+      initialValue: purityOptions.contains(item.purityController.text)
+          ? item.purityController.text
+          : purityOptions.first,
+      decoration: const InputDecoration(labelText: 'Purity'),
+      items: purityOptions
+          .map((option) => DropdownMenuItem(value: option, child: Text(option)))
+          .toList(),
+      onChanged: (value) {
+        item.purityController.text = value ?? purityOptions.first;
+        onChanged();
+      },
+    );
+    final quantityField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showQuantityError = true;
+          onChanged();
+        }
+      },
+      child: DropdownButtonFormField<int>(
+        initialValue: quantityOptions.contains(item.quantity)
+            ? item.quantity
+            : 1,
+        decoration: InputDecoration(
+          labelText: 'Quantity',
+          errorText: item.quantityError,
+        ),
+        items: quantityOptions
+            .map(
+              (quantity) => DropdownMenuItem(
+                value: quantity,
+                child: Text(quantity.toString()),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          item.quantityController.text = (value ?? 1).toString();
+          item.showQuantityError = true;
+          onChanged();
+        },
+      ),
+    );
+    final weightField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showWeightError = true;
+          onChanged();
+        }
+      },
+      child: TextField(
+        controller: item.estimatedNettWeightController,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: 'Estimated Weight',
+          suffixText: 'g',
+          errorText: item.weightError,
+        ),
+        onChanged: (_) => onChanged(),
+      ),
+    );
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 760;
+
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
               children: [
-                Expanded(
-                  child: Text(
-                    'Item $index',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                if (onRemove != null)
-                  IconButton(
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Remove item',
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showNameError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.nameController,
-                      inputFormatters: [_WordCapitalizeFormatter()],
-                      decoration: InputDecoration(
-                        labelText: 'Item Name',
-                        errorText: item.nameError,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Item $index',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                      onChanged: (_) => onChanged(),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue:
-                        purityOptions.contains(item.purityController.text)
-                        ? item.purityController.text
-                        : purityOptions.first,
-                    decoration: const InputDecoration(labelText: 'Purity'),
-                    items: purityOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(option),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      item.purityController.text = value ?? purityOptions.first;
-                      onChanged();
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showQuantityError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.quantityController,
-                      keyboardType: TextInputType.number,
-                      decoration: InputDecoration(
-                        labelText: 'Quantity',
-                        errorText: item.quantityError,
+                    if (onRemove != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onRemove,
+                          color: Theme.of(context).colorScheme.error,
+                          icon: const Icon(Icons.delete_outline),
+                          tooltip: 'Remove item',
+                        ),
+                      )
+                    else if (onReset != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onReset,
+                          color: Theme.of(context).colorScheme.primary,
+                          icon: const Icon(Icons.restart_alt),
+                          tooltip: 'Reset item',
+                        ),
                       ),
-                      onChanged: (_) => onChanged(),
-                    ),
-                  ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showWeightError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.estimatedNettWeightController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: 'Estimated Weight',
-                        suffixText: 'g',
-                        errorText: item.weightError,
-                      ),
-                      onChanged: (_) => onChanged(),
-                    ),
+                const SizedBox(height: 12),
+                if (isWide)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 150, child: purityField),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 4, child: nameField),
+                      const SizedBox(width: 12),
+                      SizedBox(width: 140, child: quantityField),
+                      const SizedBox(width: 12),
+                      SizedBox(width: 170, child: weightField),
+                    ],
+                  )
+                else ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: purityField),
+                      const SizedBox(width: 12),
+                      Expanded(child: nameField),
+                    ],
                   ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(child: quantityField),
+                      const SizedBox(width: 12),
+                      Expanded(child: weightField),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: item.notesController,
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes / Instructions',
+                    hintText: 'Optional',
+                  ),
+                  onChanged: (_) => onChanged(),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: item.notesController,
-              minLines: 2,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Notes / Instructions',
-                hintText: 'Optional',
-              ),
-              onChanged: (_) => onChanged(),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -5369,6 +6001,7 @@ class _ActualItemEditor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const purityOptions = ['22K', '18K', 'Silver'];
+    final quantityOptions = List<int>.generate(100, (index) => index + 1);
 
     return Card(
       child: Padding(
@@ -5388,6 +6021,7 @@ class _ActualItemEditor extends StatelessWidget {
                 if (onRemove != null)
                   IconButton(
                     onPressed: onRemove,
+                    color: Theme.of(context).colorScheme.error,
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'Remove item',
                   ),
@@ -5397,26 +6031,6 @@ class _ActualItemEditor extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showNameError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.nameController,
-                      inputFormatters: [_WordCapitalizeFormatter()],
-                      decoration: InputDecoration(
-                        labelText: 'Item Name',
-                        errorText: item.nameError,
-                      ),
-                      onChanged: (_) => onChanged(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     initialValue:
@@ -5438,6 +6052,26 @@ class _ActualItemEditor extends StatelessWidget {
                     },
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Focus(
+                    onFocusChange: (hasFocus) {
+                      if (!hasFocus) {
+                        item.showNameError = true;
+                        onChanged();
+                      }
+                    },
+                    child: TextField(
+                      controller: item.nameController,
+                      inputFormatters: [_WordCapitalizeFormatter()],
+                      decoration: InputDecoration(
+                        labelText: 'Item Name',
+                        errorText: item.nameError,
+                      ),
+                      onChanged: (_) => onChanged(),
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -5451,14 +6085,27 @@ class _ActualItemEditor extends StatelessWidget {
                         onChanged();
                       }
                     },
-                    child: TextField(
-                      controller: item.quantityController,
-                      keyboardType: TextInputType.number,
+                    child: DropdownButtonFormField<int>(
+                      initialValue: quantityOptions.contains(item.quantity)
+                          ? item.quantity
+                          : 1,
                       decoration: InputDecoration(
                         labelText: 'Quantity',
                         errorText: item.quantityError,
                       ),
-                      onChanged: (_) => onChanged(),
+                      items: quantityOptions
+                          .map(
+                            (quantity) => DropdownMenuItem(
+                              value: quantity,
+                              child: Text(quantity.toString()),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        item.quantityController.text = (value ?? 1).toString();
+                        item.showQuantityError = true;
+                        onChanged();
+                      },
                     ),
                   ),
                 ),
@@ -7052,35 +7699,3 @@ class _AdvanceOldItemEditor extends StatelessWidget {
   }
 }
 
-class _EstimateTableCell extends StatelessWidget {
-  const _EstimateTableCell(
-    this.text, {
-    this.isHeader = false,
-    this.textAlign = TextAlign.left,
-  });
-
-  final String text;
-  final bool isHeader;
-  final TextAlign textAlign;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = isHeader
-        ? Theme.of(
-            context,
-          ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w700)
-        : Theme.of(context).textTheme.bodySmall;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      child: Text(
-        text,
-        textAlign: textAlign,
-        style: style,
-        maxLines: isHeader ? 2 : 1,
-        softWrap: isHeader,
-        overflow: TextOverflow.visible,
-      ),
-    );
-  }
-}

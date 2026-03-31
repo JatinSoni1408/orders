@@ -225,57 +225,27 @@ class _EstimateSummaryRow extends StatelessWidget {
     required this.label,
     required this.value,
     this.emphasize = false,
+    this.textColor,
   });
 
   final String label;
   final String value;
   final bool emphasize;
+  final Color? textColor;
 
   @override
   Widget build(BuildContext context) {
     final textStyle = emphasize
-        ? Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)
-        : Theme.of(context).textTheme.bodyLarge;
+        ? Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: textColor,
+          )
+        : Theme.of(context).textTheme.bodyLarge?.copyWith(color: textColor);
 
     return Row(
       children: [
         Expanded(child: Text(label, style: textStyle)),
         Text(value, style: textStyle),
-      ],
-    );
-  }
-}
-
-class _EstimateSummaryInlineItem extends StatelessWidget {
-  const _EstimateSummaryInlineItem({
-    required this.label,
-    required this.value,
-    this.crossAxisAlignment = CrossAxisAlignment.start,
-    this.textAlign = TextAlign.left,
-  });
-
-  final String label;
-  final String value;
-  final CrossAxisAlignment crossAxisAlignment;
-  final TextAlign textAlign;
-
-  @override
-  Widget build(BuildContext context) {
-    final labelStyle = Theme.of(
-      context,
-    ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700);
-    final valueStyle = Theme.of(
-      context,
-    ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700);
-
-    return Column(
-      crossAxisAlignment: crossAxisAlignment,
-      children: [
-        Text(label, style: labelStyle, textAlign: textAlign),
-        const SizedBox(height: 2),
-        Text(value, style: valueStyle, textAlign: textAlign),
       ],
     );
   }

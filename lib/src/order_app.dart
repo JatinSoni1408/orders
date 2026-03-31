@@ -5,7 +5,10 @@ class OrderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = ColorScheme.fromSeed(seedColor: Colors.teal);
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF7EC8F8),
+      brightness: Brightness.light,
+    );
 
     return MaterialApp(
       title: _platformAppTitle,
@@ -13,7 +16,7 @@ class OrderApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: colorScheme,
-        scaffoldBackgroundColor: const Color(0xFFF9F4EE),
+        scaffoldBackgroundColor: const Color(0xFFF1F8FE),
         appBarTheme: AppBarTheme(
           backgroundColor: colorScheme.primary,
           foregroundColor: colorScheme.onPrimary,
