@@ -52,7 +52,9 @@ AppAccessRole? get _requiredAccessRoleForPlatform {
 String get _platformAppTitle {
   switch (_requiredAccessRoleForPlatform) {
     case AppAccessRole.admin:
-      return 'Jewellery Admin';
+      return 'Jewellery Desktop';
+    case AppAccessRole.staff:
+      return 'Jewellery Orders';
     case AppAccessRole.user:
     case null:
       return 'Jewellery Orders';

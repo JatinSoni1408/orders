@@ -128,6 +128,9 @@ class _FirebaseAuthService {
               if (roleText == 'admin') {
                 return AppAccessRole.admin;
               }
+              if (roleText == 'staff') {
+                return AppAccessRole.staff;
+              }
               if (roleText == 'user') {
                 return AppAccessRole.user;
               }

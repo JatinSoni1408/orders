@@ -111,6 +111,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   );
   Timer? _estimateClockTimer;
   Timer? _persistDebounceTimer;
+  Timer? _firestoreSyncDebounceTimer;
   Timer? _remoteRefreshTimer;
   bool _showEstimateNameError = false;
   bool _showEstimateMobileError = false;
@@ -1455,6 +1456,23 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     });
   }
 
+  void _scheduleFirestoreSync() {
+    if (_authSession == null || _isRestoringLocalState) {
+      return;
+    }
+
+    _firestoreSyncDebounceTimer?.cancel();
+    _firestoreSyncDebounceTimer = Timer(const Duration(milliseconds: 900), () {
+      if (_authSession == null ||
+          _isRestoringLocalState ||
+          _isRemoteSyncInProgress ||
+          _isRemoteRefreshInProgress) {
+        return;
+      }
+      _syncStateToFirestore();
+    });
+  }
+
   bool get _hasPendingLocalChanges {
     if (_authSession == null || _isRestoringLocalState) {
       return false;
@@ -1694,6 +1712,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
     if (syncImmediately) {
       await _syncStateToFirestore(ordersJson: ordersJson, draftJson: draftJson);
+    } else {
+      _scheduleFirestoreSync();
     }
   }
 
@@ -5548,6 +5568,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     HardwareKeyboard.instance.removeHandler(_handleAppKeyEvent);
     _estimateClockTimer?.cancel();
     _persistDebounceTimer?.cancel();
+    _firestoreSyncDebounceTimer?.cancel();
     _remoteRefreshTimer?.cancel();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
