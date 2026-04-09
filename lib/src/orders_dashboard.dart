@@ -88,6 +88,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       TextEditingController();
   final TextEditingController _newItemsOverallDiscountController =
       TextEditingController();
+  final TextEditingController _newItemsAdditionalChargesController =
+      TextEditingController();
   final TextEditingController _takeawayDiscountController =
       TextEditingController();
   final FocusNode _estimateCustomerNameFocusNode = FocusNode();
@@ -109,7 +111,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   );
   Timer? _estimateClockTimer;
   Timer? _persistDebounceTimer;
-  Timer? _firestoreSyncDebounceTimer;
   Timer? _remoteRefreshTimer;
   bool _showEstimateNameError = false;
   bool _showEstimateMobileError = false;
@@ -150,28 +151,41 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _selectedSection == AppSection.estimateCalculator ||
       _selectedSection == AppSection.actual;
   bool get _isAdmin => _activeRole == AppAccessRole.admin;
-  bool get _isUser => _activeRole == AppAccessRole.user;
+  bool get _isUser =>
+      _activeRole == AppAccessRole.user || _activeRole == AppAccessRole.staff;
   bool get _showAdminEditNavigation =>
       _isAdmin && _isEditingEstimate && _selectedSection != AppSection.orders;
   AppAccessRole? get _platformRequiredRole => _requiredAccessRoleForPlatform;
 
   bool _isRoleAllowedOnThisPlatform(AppAccessRole role) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      return role == AppAccessRole.admin || role == AppAccessRole.staff;
+    }
     final requiredRole = _platformRequiredRole;
     return requiredRole == null || requiredRole == role;
   }
 
   String get _accessGateTitle {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      return 'Admin / Staff Sign In';
+    }
     return switch (_platformRequiredRole) {
       AppAccessRole.admin => 'Admin Sign In',
+      AppAccessRole.staff => 'Staff Sign In',
       AppAccessRole.user => 'User Sign In',
       null => 'Sign In',
     };
   }
 
   String get _accessGateDescription {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      return 'This Windows build supports admin and staff accounts. Admin can manage, edit, and print orders. Staff can only view saved orders and open print preview from the Orders tab.';
+    }
     return switch (_platformRequiredRole) {
       AppAccessRole.admin =>
         'This Windows build is the admin app. Sign in with an admin account to manage, edit, and print orders.',
+      AppAccessRole.staff =>
+        'This build is for staff accounts. Sign in with a staff account to view and print saved orders.',
       AppAccessRole.user =>
         'This Android and iOS build is for user accounts. Sign in with a user account to view and print saved orders.',
       null =>
@@ -180,12 +194,18 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   String _platformRoleMismatchMessage() {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      return 'This Windows build only allows admin or staff accounts.';
+    }
     final requiredRole = _platformRequiredRole;
     if (requiredRole == null) {
       return 'This account is not allowed on this device.';
     }
     if (requiredRole == AppAccessRole.admin) {
       return 'This Windows build only allows admin accounts. Sign in with an admin account.';
+    }
+    if (requiredRole == AppAccessRole.staff) {
+      return 'This build only allows staff accounts. Sign in with a staff account.';
     }
     return 'Android and iOS builds only allow user accounts. Sign in with a user account on this device.';
   }
@@ -508,7 +528,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         state == AppLifecycleState.detached) {
       _stopRemoteRefreshLoop();
       _persistDebounceTimer?.cancel();
-      _persistLocalState(syncImmediately: true);
+      _persistLocalState();
     } else if (state == AppLifecycleState.resumed) {
       _startRemoteRefreshLoop();
       _refreshRemoteStateIfNeeded();
@@ -804,6 +824,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             rate: item.rate,
             making: item.rateMaking,
             weight: item.weight,
+            gstApplied: item.gstApplied,
             chequeNumber: item.chequeNumber,
           ),
         )
@@ -958,10 +979,21 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   double get _newItemsSubtotal {
-    return _populatedNewItems.fold<double>(
-      0,
-      (total, item) => total + _newItemBaseAmount(item) + item.additionalCharge,
+    return _roundCurrency2(
+      _populatedNewItems.fold<double>(
+            0,
+            (total, item) =>
+                total + _newItemBaseAmount(item) + item.additionalCharge,
+          ) +
+          _newItemsAdditionalCharges,
     );
+  }
+
+  double get _newItemsAdditionalCharges {
+    final requested = _parseFormattedDecimal(
+      _newItemsAdditionalChargesController.text,
+    );
+    return requested > 0 ? _roundCurrency2(requested) : 0;
   }
 
   double get _newItemsTotalGst {
@@ -972,9 +1004,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   double get _newItemsTotalBeforeDiscount {
-    return _populatedNewItems.fold<double>(
-      0,
-      (total, item) => total + _newItemTotalAmount(item),
+    return _roundCurrency2(
+      _populatedNewItems.fold<double>(
+            0,
+            (total, item) => total + _newItemTotalAmount(item),
+          ) +
+          _newItemsAdditionalCharges,
     );
   }
 
@@ -1341,6 +1376,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       _newItemsGold22RateController,
       _newItemsGold18RateController,
       _newItemsSilverRateController,
+      _newItemsAdditionalChargesController,
       _newItemsOverallDiscountController,
       _takeawayDiscountController,
     ]) {
@@ -1551,6 +1587,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       'newItemsGold22Rate': _newItemsGold22RateController.text,
       'newItemsGold18Rate': _newItemsGold18RateController.text,
       'newItemsSilverRate': _newItemsSilverRateController.text,
+      'newItemsAdditionalCharges': _newItemsAdditionalChargesController.text,
       'newItemsOverallDiscount': _newItemsOverallDiscountController.text,
       'takeawayDiscount': _takeawayDiscountController.text,
       'billPreviewGstEnabled': _billPreviewGstEnabled,
@@ -1565,40 +1602,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
 
   String _serializeDraftJson() {
     return jsonEncode(_buildDraftStateMap());
-  }
-
-  void _scheduleFirestoreSync({
-    String? ordersJson,
-    String? draftJson,
-    bool syncImmediately = false,
-  }) {
-    if (_isRestoringLocalState || _authSession == null) {
-      return;
-    }
-
-    final nextOrdersJson = ordersJson ?? _serializeOrdersJson();
-    final nextDraftJson = draftJson ?? _serializeDraftJson();
-    final ordersChanged = nextOrdersJson != _lastSyncedOrdersJson;
-    final draftChanged = nextDraftJson != _lastSyncedDraftJson;
-    if (!ordersChanged && !draftChanged) {
-      return;
-    }
-
-    _firestoreSyncDebounceTimer?.cancel();
-    if (syncImmediately) {
-      _syncStateToFirestore(
-        ordersJson: nextOrdersJson,
-        draftJson: nextDraftJson,
-      );
-      return;
-    }
-
-    _firestoreSyncDebounceTimer = Timer(const Duration(milliseconds: 900), () {
-      _syncStateToFirestore(
-        ordersJson: nextOrdersJson,
-        draftJson: nextDraftJson,
-      );
-    });
   }
 
   Future<void> _syncStateToFirestore({
@@ -1691,9 +1694,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     }
     if (syncImmediately) {
       await _syncStateToFirestore(ordersJson: ordersJson, draftJson: draftJson);
-      return;
     }
-    _scheduleFirestoreSync(ordersJson: ordersJson, draftJson: draftJson);
   }
 
   Future<void> _refreshRemoteStateIfNeeded() async {
@@ -2131,6 +2132,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         decodedEstimate['newItemsGold18Rate'] as String? ?? '';
     _newItemsSilverRateController.text =
         decodedEstimate['newItemsSilverRate'] as String? ?? '';
+    _newItemsAdditionalChargesController.text =
+        decodedEstimate['newItemsAdditionalCharges'] as String? ?? '';
     _newItemsOverallDiscountController.text =
         decodedEstimate['newItemsOverallDiscount'] as String? ?? '';
     _takeawayDiscountController.text =
@@ -2271,7 +2274,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       final hasRemoteOrders = remoteOrders.isNotEmpty;
       final hasRemoteDraft = remoteDraft != null;
       if (!hasRemoteOrders && !hasRemoteDraft) {
-        _scheduleFirestoreSync(syncImmediately: true);
         return;
       }
 
@@ -2296,11 +2298,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           ? jsonEncode(remoteOrders.map((order) => order.toJson()).toList())
           : null;
       _lastSyncedDraftJson = hasRemoteDraft ? jsonEncode(remoteDraft) : null;
-      if (!hasRemoteOrders || !hasRemoteDraft) {
-        _scheduleFirestoreSync(syncImmediately: true);
-      }
     } catch (_) {
-      _scheduleFirestoreSync(syncImmediately: true);
       return;
     } finally {
       _isRestoringLocalState = false;
@@ -2373,6 +2371,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.clear();
     _estimateCustomerMobileController.clear();
     _estimateAlternateMobileController.clear();
+    _newItemsAdditionalChargesController.clear();
     _newItemsOverallDiscountController.clear();
     _takeawayDiscountController.clear();
     _showEstimateNameError = false;
@@ -2442,6 +2441,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _estimateCustomerNameController.text = order.customer;
     _estimateCustomerMobileController.text = order.customerPhone ?? '';
     _estimateAlternateMobileController.text = order.altCustomerPhone ?? '';
+    _newItemsAdditionalChargesController.text =
+        order.newItemsAdditionalCharges > 0
+        ? _formatIndianNumberInput(
+            order.newItemsAdditionalCharges.toStringAsFixed(2),
+          )
+        : '';
     _newItemsOverallDiscountController.text = order.newItemsOverallDiscount > 0
         ? _formatIndianNumberInput(
             order.newItemsOverallDiscount.toStringAsFixed(2),
@@ -2502,6 +2507,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       amountText: payment.amount.toString(),
                       rateText: payment.rate.toString(),
                       rateMakingText: payment.making.toString(),
+                      gstApplied: payment.gstApplied,
                       chequeNumber: payment.chequeNumber,
                     ),
                   )
@@ -2666,7 +2672,10 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return !hasTopLevelError && !hasItemError;
   }
 
-  void _saveEstimateOrder({bool stayOnEstimate = false}) async {
+  void _saveEstimateOrder({
+    bool stayOnEstimate = false,
+    bool syncImmediately = false,
+  }) async {
     final populatedItems = _estimateItems
         .where((item) => !item.isEmpty)
         .toList();
@@ -2751,6 +2760,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           ? null
           : _estimateWeightRangeController.text.trim(),
       deliveryDate: _estimateDeliveryDate,
+      newItemsAdditionalCharges: _newItemsAdditionalCharges,
       newItemsOverallDiscount: _newItemsOverallDiscount,
       takeawayDiscount: _takeawayDiscount,
     );
@@ -2773,7 +2783,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         _selectedOrderSort = OrderSortOption.newest;
       }
     });
-    await _persistLocalState(syncImmediately: true);
+    await _persistLocalState(syncImmediately: syncImmediately);
     if (!mounted) {
       return;
     }
@@ -2839,7 +2849,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     var wasUndone = false;
     final controller = messenger.showSnackBar(
       SnackBar(
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 5),
         content: const Text('Order deleted'),
         action: SnackBarAction(
           label: 'Undo',
@@ -2859,6 +2869,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           },
         ),
       ),
+    );
+    unawaited(
+      Future<void>.delayed(const Duration(seconds: 5), () {
+        controller.close();
+      }),
     );
 
     await controller.closed;
@@ -2993,6 +3008,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       advanceTotalAmount: _advanceTotalAmount,
       advanceOldItemsTotalAmount: _advanceOldItemsTotalAmount,
       advanceNetWeight: _billPreviewAdvanceNetWeight,
+      newItemsAdditionalCharges: _newItemsAdditionalCharges,
       newItemsSubtotal: _newItemsSubtotal,
       newItemsTotalGst: _newItemsTotalGst,
       newItemsOverallDiscount: _newItemsOverallDiscount,
@@ -3068,6 +3084,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             amountText: payment.amount.toString(),
             rateText: payment.rate.toString(),
             rateMakingText: payment.making.toString(),
+            gstApplied: payment.gstApplied,
             chequeNumber: payment.chequeNumber,
           ),
         )
@@ -3189,6 +3206,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       advanceTotalAmount: advanceTotalAmount,
       advanceOldItemsTotalAmount: advanceOldItemsTotalAmount,
       advanceNetWeight: advanceNetWeight,
+      newItemsAdditionalCharges: order.newItemsAdditionalCharges,
       newItemsSubtotal: 0,
       newItemsTotalGst: 0,
       newItemsOverallDiscount: order.newItemsOverallDiscount,
@@ -3286,7 +3304,29 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _schedulePersistence();
   }
 
-  Future<void> _saveAdvanceEntries() async {
+  void _resetAdvanceEntry(int index) {
+    setState(() {
+      final replacement = _AdvanceValuationDraft();
+      final removed = _advanceItems[index];
+      _advanceItems[index] = replacement;
+      removed.dispose();
+      _attachAdvanceItemListeners(replacement);
+    });
+    _schedulePersistence();
+  }
+
+  void _resetAdvanceOldItemEntry(int index) {
+    setState(() {
+      final replacement = _AdvanceOldItemDraft();
+      final removed = _advanceOldItems[index];
+      _advanceOldItems[index] = replacement;
+      removed.dispose();
+      _attachAdvanceOldItemListeners(replacement);
+    });
+    _schedulePersistence();
+  }
+
+  Future<void> _saveAdvanceEntries({bool syncImmediately = false}) async {
     final currentOrderId = _editingOrderId;
     if (currentOrderId != null) {
       setState(() {
@@ -3314,6 +3354,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             estimateMaking: existingOrder.estimateMaking,
             estimateWeightRange: existingOrder.estimateWeightRange,
             deliveryDate: existingOrder.deliveryDate,
+            newItemsAdditionalCharges: existingOrder.newItemsAdditionalCharges,
             newItemsOverallDiscount: existingOrder.newItemsOverallDiscount,
             takeawayDiscount: existingOrder.takeawayDiscount,
           );
@@ -3321,7 +3362,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       });
     }
     _persistDebounceTimer?.cancel();
-    await _persistLocalState(syncImmediately: true);
+    await _persistLocalState(syncImmediately: syncImmediately);
     if (!mounted) {
       return;
     }
@@ -3336,6 +3377,24 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
+  Future<void> _syncOrdersPageState() async {
+    if (_isRemoteSyncInProgress) {
+      return;
+    }
+    _persistDebounceTimer?.cancel();
+    await _persistLocalState(syncImmediately: true);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          _hasRemoteSyncError ? 'Cloud sync failed' : 'Synced successfully',
+        ),
+      ),
+    );
+  }
+
   Future<bool> _confirmExitApp() async {
     final shouldExit = await showDialog<bool>(
       context: context,
@@ -3343,7 +3402,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         return AlertDialog(
           title: const Text('Exit App?'),
           content: const Text(
-            'Exit the application? Any unsaved changes will be saved before the app closes.',
+            'Exit the application? Any unsaved changes will be synced before the app closes.',
           ),
           actions: [
             TextButton(
@@ -3366,14 +3425,73 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     return shouldExit ?? false;
   }
 
+  Future<void> _waitForRemoteSyncToFinish() async {
+    while (_isRemoteSyncInProgress) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+    }
+  }
+
+  Future<bool> _syncBeforeExit() async {
+    _persistDebounceTimer?.cancel();
+    if (_authSession == null) {
+      await _persistLocalState();
+      return true;
+    }
+    await _waitForRemoteSyncToFinish();
+    await _persistLocalState(syncImmediately: true);
+    await _waitForRemoteSyncToFinish();
+    return !_hasRemoteSyncError;
+  }
+
+  Future<T> _runWithExitSyncDialog<T>(Future<T> Function() action) async {
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (progressContext) {
+        return const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.4),
+                ),
+                SizedBox(width: 16),
+                Expanded(child: Text('Syncing data before closing...')),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    try {
+      return await action();
+    } finally {
+      if (rootNavigator.mounted && rootNavigator.canPop()) {
+        rootNavigator.pop();
+      }
+    }
+  }
+
   Future<bool> _confirmAndPersistExit() async {
     final shouldExit = await _confirmExitApp();
     if (!shouldExit) {
       return false;
     }
-    _persistDebounceTimer?.cancel();
-    await _persistLocalState(syncImmediately: true);
-    return true;
+    final synced = await _runWithExitSyncDialog(_syncBeforeExit);
+    if (!synced && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cloud sync failed. Please try again before closing.'),
+        ),
+      );
+    }
+    return synced;
   }
 
   bool _isEditableTextFocused() {
@@ -4204,84 +4322,117 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Widget _buildActualBody(double contentTopPadding) {
+    final deliveryDateColor = Theme.of(context).colorScheme.tertiary;
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800);
+
     return SafeArea(
       child: SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(16, contentTopPadding, 16, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            DateFormat(
-                              'dd/MM/yy HH:mm:ss',
-                            ).format(_estimateDate),
-                            style: Theme.of(context).textTheme.bodyLarge,
-                          ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerLowest,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Theme.of(context).dividerColor),
+              ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isWide = constraints.maxWidth >= 980;
+
+                  final orderDateField = _EditableDateField(
+                    date: _estimateDate,
+                    labelText: 'Order Date',
+                    onDateSelected: _setEstimateDate,
+                  );
+                  final deliveryDateField = _DateField(
+                    date: _estimateDeliveryDate,
+                    labelText: 'Delivery Date',
+                    valueStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: deliveryDateColor,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    labelStyle: Theme.of(
+                      context,
+                    ).textTheme.bodyMedium?.copyWith(color: deliveryDateColor),
+                    iconColor: deliveryDateColor,
+                    borderColor: deliveryDateColor,
+                    onDateSelected: (selected) {
+                      setState(() {
+                        _estimateDeliveryDate = selected;
+                      });
+                      _schedulePersistence();
+                    },
+                  );
+                  final nameField = TextField(
+                    focusNode: _estimateCustomerNameFocusNode,
+                    controller: _estimateCustomerNameController,
+                    decoration: InputDecoration(
+                      labelText: 'Name',
+                      errorText: _estimateNameError,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  );
+                  final mobileField = TextField(
+                    focusNode: _estimateCustomerMobileFocusNode,
+                    controller: _estimateCustomerMobileController,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9]')),
+                      LengthLimitingTextInputFormatter(10),
+                    ],
+                    decoration: InputDecoration(
+                      labelText: 'Whatsapp Number',
+                      errorText: _estimateMobileError,
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  );
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(child: Text('Customer Details', style: titleStyle)),
+                      const SizedBox(height: 12),
+                      if (isWide)
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: orderDateField),
+                            const SizedBox(width: 12),
+                            Expanded(child: deliveryDateField),
+                            const SizedBox(width: 12),
+                            Expanded(child: nameField),
+                            const SizedBox(width: 12),
+                            Expanded(child: mobileField),
+                          ],
+                        )
+                      else ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: orderDateField),
+                            const SizedBox(width: 12),
+                            Expanded(child: deliveryDateField),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _DateField(
-                            date: _estimateDeliveryDate,
-                            labelText: 'Delivery Date',
-                            onDateSelected: (selected) {
-                              setState(() {
-                                _estimateDeliveryDate = selected;
-                              });
-                              _schedulePersistence();
-                            },
-                          ),
+                        const SizedBox(height: 12),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: nameField),
+                            const SizedBox(width: 12),
+                            Expanded(child: mobileField),
+                          ],
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateCustomerNameFocusNode,
-                            controller: _estimateCustomerNameController,
-                            decoration: InputDecoration(
-                              labelText: 'Name',
-                              errorText: _estimateNameError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            focusNode: _estimateCustomerMobileFocusNode,
-                            controller: _estimateCustomerMobileController,
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r'[0-9]'),
-                              ),
-                              LengthLimitingTextInputFormatter(10),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: 'Whatsapp Number',
-                              errorText: _estimateMobileError,
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+                    ],
+                  );
+                },
               ),
             ),
             const SizedBox(height: 20),
@@ -4456,6 +4607,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                               setState(() {});
                               _schedulePersistence();
                             },
+                            onReset: _advanceItems.length == 1
+                                ? () => _resetAdvanceEntry(index)
+                                : null,
                             onRemove: _advanceItems.length == 1
                                 ? null
                                 : () {
@@ -4513,6 +4667,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                               setState(() {});
                               _schedulePersistence();
                             },
+                            onReset: _advanceOldItems.length == 1
+                                ? () => _resetAdvanceOldItemEntry(index)
+                                : null,
                             onRemove: _advanceOldItems.length == 1
                                 ? null
                                 : () {
@@ -4576,12 +4733,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     final metrics = [
       (
         label: 'Advance Entries',
-        value: _advanceItems.length.toString(),
+        value: _populatedAdvanceItems.length.toString(),
         icon: Icons.account_balance_wallet_outlined,
       ),
       (
         label: 'Old Items',
-        value: _advanceOldItems.length.toString(),
+        value: _populatedAdvanceOldItems.length.toString(),
         icon: Icons.history_toggle_off_outlined,
       ),
       (
@@ -4760,10 +4917,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     );
   }
 
+
   Widget _buildItemsBody(double contentTopPadding) {
     final populatedNewItems = _populatedNewItems;
     final editableManualNewItems = _editableManualNewItems;
     final showsDifferenceNewItem = _shouldShowDifferenceNewItem;
+    final additionalChargesColor = Theme.of(context).colorScheme.error;
     if (showsDifferenceNewItem) {
       _syncDifferenceNewItem();
     }
@@ -4877,6 +5036,25 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               );
             }),
             const SizedBox(height: 12),
+            TextField(
+              controller: _newItemsAdditionalChargesController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: const [_IndianCurrencyInputFormatter()],
+              style: TextStyle(color: additionalChargesColor),
+              decoration: InputDecoration(
+                labelText: 'Additional Charges',
+                hintText: 'Enter overall additional charges',
+                labelStyle: TextStyle(color: additionalChargesColor),
+                floatingLabelStyle: TextStyle(color: additionalChargesColor),
+              ),
+              onChanged: (_) {
+                setState(() {});
+                _schedulePersistence();
+              },
+            ),
+            const SizedBox(height: 12),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -4912,7 +5090,13 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     ),
                     const SizedBox(height: 8),
                     _EstimateSummaryRow(
-                      label: 'Base + Extras',
+                      label: 'Additional Charges',
+                      value: _formatCurrency(_newItemsAdditionalCharges),
+                      textColor: additionalChargesColor,
+                    ),
+                    const SizedBox(height: 8),
+                    _EstimateSummaryRow(
+                      label: 'Subtotal',
                       value: _formatCurrency(_newItemsSubtotal),
                     ),
                     const SizedBox(height: 8),
@@ -5017,6 +5201,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   Widget _buildTakeawaySummaryCard() {
+    final takeawaySubtotal = _advanceCombinedAmount + _newItemsGrandTotal;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -5024,7 +5209,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Takeaway Summary',
+              'Totals',
               style: Theme.of(
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
@@ -5103,6 +5288,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
               ),
               child: Column(
                 children: [
+                  _EstimateSummaryRow(
+                    label: 'Subtotal',
+                    value: _formatCurrency(takeawaySubtotal),
+                  ),
+                  const SizedBox(height: 8),
                   _EstimateSummaryRow(
                     label: 'Final Due Before G%',
                     value: _formatCurrency(_takeawayBaseFinalDueAmount),
@@ -5358,7 +5548,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     HardwareKeyboard.instance.removeHandler(_handleAppKeyEvent);
     _estimateClockTimer?.cancel();
     _persistDebounceTimer?.cancel();
-    _firestoreSyncDebounceTimer?.cancel();
     _remoteRefreshTimer?.cancel();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
@@ -5373,6 +5562,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
     _newItemsGold22RateController.dispose();
     _newItemsGold18RateController.dispose();
     _newItemsSilverRateController.dispose();
+    _newItemsAdditionalChargesController.dispose();
     _newItemsOverallDiscountController.dispose();
     _takeawayDiscountController.dispose();
     _estimateCustomerNameFocusNode.dispose();
@@ -5419,21 +5609,36 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             AppSection.billPreview => 'Bill Preview',
           };
     final appBarActions = <Widget>[
+      if (_selectedSection == AppSection.orders)
+        IconButton(
+          onPressed: _isRemoteSyncInProgress ? null : _syncOrdersPageState,
+          icon: const Icon(Icons.sync_outlined),
+          tooltip: 'Sync now',
+        ),
       if (_isAdmin && _selectedSection == AppSection.estimateCalculator)
         IconButton(
-          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          onPressed: () => _saveEstimateOrder(
+            stayOnEstimate: true,
+            syncImmediately: true,
+          ),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
       if (_isAdmin && _selectedSection == AppSection.actual)
         IconButton(
-          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          onPressed: () => _saveEstimateOrder(
+            stayOnEstimate: true,
+            syncImmediately: true,
+          ),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
       if (_isAdmin && _selectedSection == AppSection.billPreview)
         IconButton(
-          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          onPressed: () => _saveEstimateOrder(
+            stayOnEstimate: true,
+            syncImmediately: true,
+          ),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
@@ -5445,13 +5650,16 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         ),
       if (_isAdmin && _selectedSection == AppSection.items)
         IconButton(
-          onPressed: () => _saveEstimateOrder(stayOnEstimate: true),
+          onPressed: () => _saveEstimateOrder(
+            stayOnEstimate: true,
+            syncImmediately: true,
+          ),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
       if (_isAdmin && _selectedSection == AppSection.advance)
         IconButton(
-          onPressed: _saveAdvanceEntries,
+          onPressed: () => _saveAdvanceEntries(syncImmediately: true),
           icon: const Icon(Icons.save_outlined),
           tooltip: 'Save advance entries',
         ),
@@ -6002,196 +6210,216 @@ class _ActualItemEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     const purityOptions = ['22K', '18K', 'Silver'];
     final quantityOptions = List<int>.generate(100, (index) => index + 1);
+    final purityField = DropdownButtonFormField<String>(
+      initialValue: purityOptions.contains(item.purityController.text)
+          ? item.purityController.text
+          : purityOptions.first,
+      decoration: const InputDecoration(labelText: 'Purity'),
+      items: purityOptions
+          .map(
+            (option) => DropdownMenuItem(value: option, child: Text(option)),
+          )
+          .toList(),
+      onChanged: (value) {
+        item.purityController.text = value ?? purityOptions.first;
+        onChanged();
+      },
+    );
+    final itemNameField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showNameError = true;
+          onChanged();
+        }
+      },
+      child: TextField(
+        controller: item.nameController,
+        inputFormatters: [_WordCapitalizeFormatter()],
+        decoration: InputDecoration(
+          labelText: 'Item Name',
+          errorText: item.nameError,
+        ),
+        onChanged: (_) => onChanged(),
+      ),
+    );
+    final quantityField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showQuantityError = true;
+          onChanged();
+        }
+      },
+      child: DropdownButtonFormField<int>(
+        initialValue: quantityOptions.contains(item.quantity) ? item.quantity : 1,
+        decoration: InputDecoration(
+          labelText: 'Quantity',
+          errorText: item.quantityError,
+        ),
+        items: quantityOptions
+            .map(
+              (quantity) => DropdownMenuItem(
+                value: quantity,
+                child: Text(quantity.toString()),
+              ),
+            )
+            .toList(),
+        onChanged: (value) {
+          item.quantityController.text = (value ?? 1).toString();
+          item.showQuantityError = true;
+          onChanged();
+        },
+      ),
+    );
+    final estimatedWeightField = Focus(
+      onFocusChange: (hasFocus) {
+        if (!hasFocus) {
+          item.showWeightError = true;
+          onChanged();
+        }
+      },
+      child: TextField(
+        controller: item.estimatedNettWeightController,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: 'Estimated Weight',
+          suffixText: 'g',
+          errorText: item.weightError,
+        ),
+        onChanged: (_) => onChanged(),
+      ),
+    );
+    final grossWeightField = TextField(
+      controller: item.grossWeightController,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: const InputDecoration(
+        labelText: 'Gross Weight',
+        suffixText: 'g',
+      ),
+      onChanged: (_) => onChanged(),
+    );
+    final lessWeightField = TextField(
+      controller: item.lessWeightController,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: const InputDecoration(
+        labelText: 'Less Weight',
+        suffixText: 'g',
+      ),
+      onChanged: (_) => onChanged(),
+    );
+    final netWeightField = InputDecorator(
+      decoration: const InputDecoration(
+        labelText: 'Nett Weight',
+        suffixText: 'g',
+      ),
+      child: Text(
+        _formatWeightFixed3(item.actualNetWeight),
+        style: Theme.of(
+          context,
+        ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+      ),
+    );
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 920;
+          final canFitWeightRow = constraints.maxWidth >= 620;
+
+          return Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
               children: [
-                Expanded(
-                  child: Text(
-                    'Item $index',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                if (onRemove != null)
-                  IconButton(
-                    onPressed: onRemove,
-                    color: Theme.of(context).colorScheme.error,
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Remove item',
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue:
-                        purityOptions.contains(item.purityController.text)
-                        ? item.purityController.text
-                        : purityOptions.first,
-                    decoration: const InputDecoration(labelText: 'Purity'),
-                    items: purityOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(option),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      item.purityController.text = value ?? purityOptions.first;
-                      onChanged();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showNameError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.nameController,
-                      inputFormatters: [_WordCapitalizeFormatter()],
-                      decoration: InputDecoration(
-                        labelText: 'Item Name',
-                        errorText: item.nameError,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Item $index',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                      onChanged: (_) => onChanged(),
                     ),
-                  ),
+                    if (onRemove != null)
+                      IconButton(
+                        onPressed: onRemove,
+                        color: Theme.of(context).colorScheme.error,
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove item',
+                      ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showQuantityError = true;
-                        onChanged();
-                      }
-                    },
-                    child: DropdownButtonFormField<int>(
-                      initialValue: quantityOptions.contains(item.quantity)
-                          ? item.quantity
-                          : 1,
-                      decoration: InputDecoration(
-                        labelText: 'Quantity',
-                        errorText: item.quantityError,
-                      ),
-                      items: quantityOptions
-                          .map(
-                            (quantity) => DropdownMenuItem(
-                              value: quantity,
-                              child: Text(quantity.toString()),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        item.quantityController.text = (value ?? 1).toString();
-                        item.showQuantityError = true;
-                        onChanged();
-                      },
-                    ),
+                const SizedBox(height: 8),
+                if (isWide)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(flex: 2, child: purityField),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 4, child: itemNameField),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 2, child: quantityField),
+                      const SizedBox(width: 12),
+                      Expanded(flex: 3, child: estimatedWeightField),
+                    ],
+                  )
+                else ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: purityField),
+                      const SizedBox(width: 12),
+                      Expanded(child: itemNameField),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Focus(
-                    onFocusChange: (hasFocus) {
-                      if (!hasFocus) {
-                        item.showWeightError = true;
-                        onChanged();
-                      }
-                    },
-                    child: TextField(
-                      controller: item.estimatedNettWeightController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: InputDecoration(
-                        labelText: 'Estimated Weight',
-                        suffixText: 'g',
-                        errorText: item.weightError,
-                      ),
-                      onChanged: (_) => onChanged(),
-                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: quantityField),
+                      const SizedBox(width: 12),
+                      Expanded(child: estimatedWeightField),
+                    ],
                   ),
+                ],
+                const SizedBox(height: 12),
+                if (canFitWeightRow)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: grossWeightField),
+                      const SizedBox(width: 12),
+                      Expanded(child: lessWeightField),
+                      const SizedBox(width: 12),
+                      Expanded(child: netWeightField),
+                    ],
+                  )
+                else ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: grossWeightField),
+                      const SizedBox(width: 12),
+                      Expanded(child: lessWeightField),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  netWeightField,
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: item.notesController,
+                  minLines: 2,
+                  maxLines: 3,
+                  decoration: const InputDecoration(
+                    labelText: 'Notes / Instructions',
+                    hintText: 'Optional',
+                  ),
+                  onChanged: (_) => onChanged(),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: item.grossWeightController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Gross Weight',
-                      suffixText: 'g',
-                    ),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: item.lessWeightController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Less Weight',
-                      suffixText: 'g',
-                    ),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Nett Weight',
-                suffixText: 'g',
-              ),
-              child: Text(
-                _formatWeightFixed3(item.actualNetWeight),
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: item.notesController,
-              minLines: 2,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Notes / Instructions',
-                hintText: 'Optional',
-              ),
-              onChanged: (_) => onChanged(),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -6658,8 +6886,17 @@ class _NewItemEditor extends StatelessWidget {
                       decimal: true,
                     ),
                     inputFormatters: decimalInput,
-                    decoration: const InputDecoration(
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    decoration: InputDecoration(
                       labelText: 'Additional Charge',
+                      labelStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      floatingLabelStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                     onChanged: (_) => onChanged(),
                   ),
@@ -6944,6 +7181,7 @@ class _AdvanceValuationDraft {
     String? amountText,
     String? rateText,
     String? rateMakingText,
+    this.gstApplied = false,
     String? chequeNumber,
   }) : _date = date ?? DateTime.now(),
        _mode = mode ?? AdvanceMode.cash,
@@ -6977,16 +7215,19 @@ class _AdvanceValuationDraft {
               : ''),
       rateText: legacyRateText,
       rateMakingText: json['rateMakingText'] as String? ?? '',
+      gstApplied: json['gstApplied'] as bool? ?? false,
       chequeNumber: json['chequeNumber'] as String? ?? '',
     );
   }
 
   DateTime? _date;
   AdvanceMode? _mode;
+  bool gstApplied;
   final TextEditingController amountController;
   final TextEditingController rateController;
   final TextEditingController rateMakingController;
   final TextEditingController chequeNumberController;
+  static const double gstPercent = 3;
 
   DateTime get date => _date ?? DateTime.now();
 
@@ -7018,8 +7259,19 @@ class _AdvanceValuationDraft {
     return _truncateTo3Decimals(rate + ((rate * rateMaking) / 100));
   }
 
+  double get otherCharges {
+    if (!gstApplied || effectiveRate <= 0) {
+      return 0;
+    }
+    return _truncateTo3Decimals(effectiveRate * (gstPercent / 100));
+  }
+
+  double get effectiveRateWithOthers {
+    return _truncateTo3Decimals(effectiveRate + otherCharges);
+  }
+
   double get weight {
-    return _netWeightFromRateWithMaking(amount, effectiveRate);
+    return _netWeightFromRateWithMaking(amount, effectiveRateWithOthers);
   }
 
   AdvanceValuationLine get line => AdvanceValuationLine(
@@ -7028,6 +7280,7 @@ class _AdvanceValuationDraft {
     amount: amount,
     rate: rate,
     rateMaking: rateMaking,
+    gstApplied: gstApplied,
     chequeNumber: chequeNumber,
   );
 
@@ -7038,6 +7291,7 @@ class _AdvanceValuationDraft {
       'amountText': amountController.text,
       'rateText': rateController.text,
       'rateMakingText': rateMakingController.text,
+      'gstApplied': gstApplied,
       'chequeNumber': chequeNumberController.text,
     };
   }
@@ -7055,152 +7309,195 @@ class _AdvanceValuationEditor extends StatelessWidget {
     required this.index,
     required this.item,
     required this.onChanged,
+    this.onReset,
     this.onRemove,
   });
 
   final int index;
   final _AdvanceValuationDraft item;
   final VoidCallback onChanged;
+  final VoidCallback? onReset;
   final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Advance Entry $index',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 760;
+
+        final dateField = _DateField(
+          date: item.date,
+          labelText: 'Date',
+          onDateSelected: (selected) {
+            item.date = selected;
+            onChanged();
+          },
+        );
+        final modeField = DropdownButtonFormField<AdvanceMode>(
+          initialValue: item.mode,
+          decoration: const InputDecoration(labelText: 'Mode'),
+          items: AdvanceMode.values
+              .map(
+                (mode) => DropdownMenuItem(value: mode, child: Text(mode.label)),
+              )
+              .toList(),
+          onChanged: (value) {
+            item.mode = value ?? AdvanceMode.cash;
+            onChanged();
+          },
+        );
+        final amountField = TextField(
+          controller: item.amountController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: const [_IndianCurrencyInputFormatter()],
+          decoration: const InputDecoration(labelText: 'Amount'),
+          onChanged: (_) => onChanged(),
+        );
+        final rateField = TextField(
+          controller: item.rateController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: const [_IndianCurrencyInputFormatter()],
+          decoration: const InputDecoration(labelText: 'Rate22', hintText: '-Unfix-'),
+          onChanged: (_) => onChanged(),
+        );
+        final makingField = TextField(
+          controller: item.rateMakingController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          decoration: const InputDecoration(
+            labelText: 'Making%',
+            suffixText: '%',
+          ),
+          onChanged: (_) => onChanged(),
+        );
+        final gstField = InputDecorator(
+          decoration: const InputDecoration(labelText: 'GST', suffixText: '%'),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _formatWeight3(_AdvanceValuationDraft.gstPercent),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
                 ),
-                if (onRemove != null)
-                  IconButton(
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Remove item',
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _DateField(
-                    date: item.date,
-                    labelText: 'Date',
-                    onDateSelected: (selected) {
-                      item.date = selected;
-                      onChanged();
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<AdvanceMode>(
-                    initialValue: item.mode,
-                    decoration: const InputDecoration(labelText: 'Mode'),
-                    items: AdvanceMode.values
-                        .map(
-                          (mode) => DropdownMenuItem(
-                            value: mode,
-                            child: Text(mode.label),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      item.mode = value ?? AdvanceMode.cash;
-                      onChanged();
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (item.mode == AdvanceMode.banking) ...[
-              TextField(
-                controller: item.chequeNumberController,
-                keyboardType: TextInputType.text,
-                decoration: const InputDecoration(labelText: 'Cheque Number'),
-                onChanged: (_) => onChanged(),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'Apply',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                  Switch.adaptive(
+                    value: item.gstApplied,
+                    onChanged: (value) {
+                      item.gstApplied = value;
+                      onChanged();
+                    },
+                  ),
+                ],
+              ),
             ],
-            Row(
+          ),
+        );
+        final netWeightField = InputDecorator(
+          decoration: const InputDecoration(
+            labelText: 'Net Weight',
+            suffixText: 'gm',
+          ),
+          child: Text(
+            _formatWeight3(item.weight),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
+
+        Widget buildRow(List<Widget> fields) {
+          if (isCompact) {
+            return Column(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: item.amountController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(labelText: 'Amount'),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: item.rateMakingController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                    ],
-                    decoration: const InputDecoration(
-                      labelText: 'Making%',
-                      suffixText: '%',
-                    ),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
+                for (var i = 0; i < fields.length; i++) ...[
+                  fields[i],
+                  if (i != fields.length - 1) const SizedBox(height: 12),
+                ],
               ],
-            ),
-            const SizedBox(height: 12),
-            Row(
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[
+                Expanded(child: fields[i]),
+                if (i != fields.length - 1) const SizedBox(width: 12),
+              ],
+            ],
+          );
+        }
+
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: item.rateController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(
-                      labelText: 'Rate22',
-                      hintText: '-Unfix-',
-                    ),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Net Weight',
-                      suffixText: 'gm',
-                    ),
-                    child: Text(
-                      _formatWeight3(item.weight),
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Advance Entry $index',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
+                    if (onRemove != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onRemove,
+                          color: Theme.of(context).colorScheme.error,
+                          icon: const Icon(Icons.delete_outline),
+                          tooltip: 'Remove item',
+                        ),
+                      )
+                    else if (onReset != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onReset,
+                          color: Theme.of(context).colorScheme.primary,
+                          icon: const Icon(Icons.restart_alt),
+                          tooltip: 'Reset item',
+                        ),
+                      ),
+                  ],
                 ),
+                const SizedBox(height: 8),
+                buildRow([dateField, modeField, amountField]),
+                if (item.mode == AdvanceMode.banking) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: item.chequeNumberController,
+                    keyboardType: TextInputType.text,
+                    decoration: const InputDecoration(labelText: 'Cheque Number'),
+                    onChanged: (_) => onChanged(),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                buildRow([rateField, makingField, gstField, netWeightField]),
               ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -7488,12 +7785,14 @@ class _AdvanceOldItemEditor extends StatelessWidget {
     required this.index,
     required this.item,
     required this.onChanged,
+    this.onReset,
     this.onRemove,
   });
 
   final int index;
   final _AdvanceOldItemDraft item;
   final VoidCallback onChanged;
+  final VoidCallback? onReset;
   final VoidCallback? onRemove;
 
   static final List<String> _tanchOptions = <String>[
@@ -7527,35 +7826,122 @@ class _AdvanceOldItemEditor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final decimalInput = [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 900;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Old Item $index',
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+        final returnBhavField = TextField(
+          controller: item.returnRateController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: const [_IndianCurrencyInputFormatter()],
+          decoration: const InputDecoration(labelText: 'Return Bhav'),
+          onChanged: (_) => onChanged(),
+        );
+        final tanchField = DropdownButtonFormField<String>(
+          initialValue: _selectedTanchValue(item.tanchController.text),
+          decoration: const InputDecoration(labelText: 'Tanch'),
+          items: _tanchOptions
+              .map(
+                (value) => DropdownMenuItem(
+                  value: value,
+                  child: Text(_formatTanchPercent(double.tryParse(value) ?? 0)),
                 ),
-                if (onRemove != null)
-                  IconButton(
-                    onPressed: onRemove,
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Remove old item',
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
+              )
+              .toList(),
+          onChanged: (value) {
+            item.tanchController.text = value ?? '';
+            onChanged();
+          },
+        );
+        final grossField = TextField(
+          controller: item.grossWeightController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: decimalInput,
+          decoration: const InputDecoration(labelText: 'Gross'),
+          onChanged: (_) => onChanged(),
+        );
+        final lessField = TextField(
+          controller: item.lessWeightController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: decimalInput,
+          decoration: const InputDecoration(labelText: 'Less'),
+          onChanged: (_) => onChanged(),
+        );
+        final nettField = InputDecorator(
+          decoration: const InputDecoration(labelText: 'Nett'),
+          child: Text(_formatWeight3(item.nettWeight)),
+        );
+        final amountField = InputDecorator(
+          decoration: const InputDecoration(labelText: 'Amount'),
+          child: Text(_formatCurrency(item.amount)),
+        );
+
+        Widget buildRow(List<Widget> fields) {
+          if (isCompact) {
+            return Column(
               children: [
-                Expanded(
-                  child: _DateField(
+                for (var i = 0; i < fields.length; i++) ...[
+                  fields[i],
+                  if (i != fields.length - 1) const SizedBox(height: 12),
+                ],
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < fields.length; i++) ...[
+                Expanded(child: fields[i]),
+                if (i != fields.length - 1) const SizedBox(width: 12),
+              ],
+            ],
+          );
+        }
+
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Old Item $index',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (onRemove != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onRemove,
+                          color: Theme.of(context).colorScheme.error,
+                          icon: const Icon(Icons.delete_outline),
+                          tooltip: 'Remove old item',
+                        ),
+                      )
+                    else if (onReset != null)
+                      Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        descendantsAreFocusable: false,
+                        child: IconButton(
+                          onPressed: onReset,
+                          color: Theme.of(context).colorScheme.primary,
+                          icon: const Icon(Icons.restart_alt),
+                          tooltip: 'Reset old item',
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                buildRow([
+                  _DateField(
                     date: item.date,
                     labelText: 'Date',
                     onDateSelected: (selected) {
@@ -7563,122 +7949,34 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                       onChanged();
                     },
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
+                  TextField(
                     controller: item.itemNameController,
                     inputFormatters: [_WordCapitalizeFormatter()],
                     decoration: const InputDecoration(labelText: 'Item Name'),
                     onChanged: (_) => onChanged(),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: item.returnRateController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(labelText: 'Return Bhav'),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedTanchValue(
-                      item.tanchController.text,
-                    ),
-                    decoration: const InputDecoration(labelText: 'Tanch'),
-                    items: _tanchOptions
-                        .map(
-                          (value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(
-                              _formatTanchPercent(double.tryParse(value) ?? 0),
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      item.tanchController.text = value ?? '';
-                      onChanged();
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: item.grossWeightController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: decimalInput,
-                    decoration: const InputDecoration(labelText: 'Gross'),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: item.lessWeightController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: decimalInput,
-                    decoration: const InputDecoration(labelText: 'Less'),
-                    onChanged: (_) => onChanged(),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: InputDecorator(
-                    decoration: const InputDecoration(labelText: 'Nett'),
-                    child: Text(_formatWeight3(item.nettWeight)),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: InputDecorator(
-                    decoration: const InputDecoration(labelText: 'Amount'),
-                    child: Text(_formatCurrency(item.amount)),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
+                ]),
+                const SizedBox(height: 12),
+                buildRow([
+                  grossField,
+                  lessField,
+                  nettField,
+                  tanchField,
+                  returnBhavField,
+                  amountField,
+                ]),
+                const SizedBox(height: 12),
+                buildRow([
+                  TextField(
                     controller: item.advanceRateController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
                     inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(
-                      labelText: 'Advance Rate',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Advance Rate'),
                     onChanged: (_) => onChanged(),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
+                  TextField(
                     controller: item.advanceMakingController,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
@@ -7689,12 +7987,12 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                     ),
                     onChanged: (_) => onChanged(),
                   ),
-                ),
+                ]),
               ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

@@ -11,7 +11,7 @@ enum AppSection {
   billPreview,
 }
 
-enum AppAccessRole { admin, user }
+enum AppAccessRole { admin, staff, user }
 
 enum OrderSortOption { newest, deliveryLatest, nameAZ }
 
@@ -37,6 +37,7 @@ class Order {
     this.estimateMaking,
     this.estimateWeightRange,
     this.deliveryDate,
+    this.newItemsAdditionalCharges = 0,
     this.newItemsOverallDiscount = 0,
     this.takeawayDiscount = 0,
   }) : advancePayments = advancePayments ?? const [],
@@ -62,6 +63,7 @@ class Order {
   final double? estimateMaking;
   final String? estimateWeightRange;
   final DateTime? deliveryDate;
+  final double newItemsAdditionalCharges;
   final double newItemsOverallDiscount;
   final double takeawayDiscount;
 
@@ -89,6 +91,7 @@ class Order {
       'estimateMaking': estimateMaking,
       'estimateWeightRange': estimateWeightRange,
       'deliveryDate': deliveryDate?.toIso8601String(),
+      'newItemsAdditionalCharges': newItemsAdditionalCharges,
       'newItemsOverallDiscount': newItemsOverallDiscount,
       'takeawayDiscount': takeawayDiscount,
     };
@@ -130,6 +133,8 @@ class Order {
       estimateMaking: (json['estimateMaking'] as num?)?.toDouble(),
       estimateWeightRange: json['estimateWeightRange'] as String?,
       deliveryDate: _dateTimeFromJson(json['deliveryDate']),
+      newItemsAdditionalCharges:
+          (json['newItemsAdditionalCharges'] as num?)?.toDouble() ?? 0,
       newItemsOverallDiscount:
           (json['newItemsOverallDiscount'] as num?)?.toDouble() ?? 0,
       takeawayDiscount: (json['takeawayDiscount'] as num?)?.toDouble() ?? 0,
@@ -221,6 +226,7 @@ class AdvancePayment {
     required this.rate,
     required this.making,
     required this.weight,
+    this.gstApplied = false,
     this.chequeNumber,
   });
 
@@ -230,6 +236,7 @@ class AdvancePayment {
   final double rate;
   final double making;
   final double weight;
+  final bool gstApplied;
   final String? chequeNumber;
 
   Map<String, dynamic> toJson() {
@@ -240,6 +247,7 @@ class AdvancePayment {
       'rate': rate,
       'making': making,
       'weight': weight,
+      'gstApplied': gstApplied,
       'chequeNumber': chequeNumber,
     };
   }
@@ -257,6 +265,7 @@ class AdvancePayment {
       rate: (json['rate'] as num).toDouble(),
       making: (json['making'] as num).toDouble(),
       weight: (json['weight'] as num).toDouble(),
+      gstApplied: json['gstApplied'] as bool? ?? false,
       chequeNumber: json['chequeNumber'] as String?,
     );
   }
@@ -373,6 +382,7 @@ class AdvanceValuationLine {
     required this.amount,
     required this.rate,
     required this.rateMaking,
+    this.gstApplied = false,
     this.chequeNumber,
   });
 
@@ -381,14 +391,28 @@ class AdvanceValuationLine {
   final double amount;
   final double rate;
   final double rateMaking;
+  final bool gstApplied;
   final String? chequeNumber;
+
+  static const double gstPercent = 3;
 
   double get effectiveRate {
     return _truncateTo3Decimals(rate + ((rate * rateMaking) / 100));
   }
 
+  double get otherCharges {
+    if (!gstApplied || effectiveRate <= 0) {
+      return 0;
+    }
+    return _truncateTo3Decimals(effectiveRate * (gstPercent / 100));
+  }
+
+  double get effectiveRateWithOthers {
+    return _truncateTo3Decimals(effectiveRate + otherCharges);
+  }
+
   double get weight {
-    return _netWeightFromRateWithMaking(amount, effectiveRate);
+    return _netWeightFromRateWithMaking(amount, effectiveRateWithOthers);
   }
 
   Map<String, dynamic> toJson() {
@@ -398,6 +422,7 @@ class AdvanceValuationLine {
       'amount': amount,
       'rate': rate,
       'rateMaking': rateMaking,
+      'gstApplied': gstApplied,
       'chequeNumber': chequeNumber,
     };
   }
@@ -417,6 +442,7 @@ class AdvanceValuationLine {
           (json['amount'] as num?)?.toDouble() ?? (legacyWeight * legacyRate),
       rate: legacyRate,
       rateMaking: (json['rateMaking'] as num?)?.toDouble() ?? 0,
+      gstApplied: json['gstApplied'] as bool? ?? false,
       chequeNumber: json['chequeNumber'] as String?,
     );
   }
@@ -595,6 +621,8 @@ extension AppAccessRoleX on AppAccessRole {
     switch (this) {
       case AppAccessRole.admin:
         return 'Admin';
+      case AppAccessRole.staff:
+        return 'Staff';
       case AppAccessRole.user:
         return 'User';
     }

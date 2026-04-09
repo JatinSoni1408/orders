@@ -107,6 +107,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
     required this.advanceTotalAmount,
     required this.advanceOldItemsTotalAmount,
     required this.advanceNetWeight,
+    required this.newItemsAdditionalCharges,
     required this.newItemsSubtotal,
     required this.newItemsTotalGst,
     required this.newItemsOverallDiscount,
@@ -144,6 +145,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
   final double advanceTotalAmount;
   final double advanceOldItemsTotalAmount;
   final double advanceNetWeight;
+  final double newItemsAdditionalCharges;
   final double newItemsSubtotal;
   final double newItemsTotalGst;
   final double newItemsOverallDiscount;
@@ -358,6 +360,10 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
           : NumberFormat('0.000', 'en_IN').format(value);
     }
 
+    String formattedAdvanceOthers(double value) {
+      return NumberFormat('0.000', 'en_IN').format(_truncateWeight3(value));
+    }
+
     final estimateList = estimateItems.where((item) => !item.isEmpty).toList();
     final advanceList = advanceItems.where((item) => !item.isEmpty).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -378,6 +384,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
               String rate,
               String making,
               String rateWithMaking,
+              String others,
               String netWeight,
             })
           >[
@@ -389,6 +396,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 rate: _advanceRateLabel(item.rate),
                 making: '${item.rateMaking.toStringAsFixed(2)}%',
                 rateWithMaking: formattedRateWithMaking(item.effectiveRate),
+                others: formattedAdvanceOthers(item.otherCharges),
                 netWeight: truncatedWeightText(item.weight),
               ),
             ),
@@ -404,6 +412,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 rateWithMaking: formattedRateWithMaking(
                   item.advanceEffectiveRate,
                 ),
+                others: '-',
                 netWeight: truncatedWeightText(item.advanceWeight),
               ),
             ),
@@ -880,24 +889,19 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                   pw.SizedBox(height: 8),
                 if (combinedAdvanceRows.isNotEmpty)
                   pw.Text('Advance', style: valueStyle),
-                if (combinedAdvanceRows.isNotEmpty) pw.SizedBox(height: 2),
-                if (combinedAdvanceRows.isNotEmpty)
-                  pw.Text(
-                    'Net Wt ${truncatedWeightText(combinedAdvanceTotalNetWeight)} gm',
-                    style: subheadingStyle,
-                  ),
                 if (combinedAdvanceRows.isNotEmpty) pw.SizedBox(height: 6),
                 if (combinedAdvanceRows.isNotEmpty)
                   pw.Table(
                     border: pw.TableBorder.all(color: PdfColors.grey400),
                     columnWidths: const {
                       0: pw.FixedColumnWidth(34),
-                      1: pw.FixedColumnWidth(74),
+                      1: pw.FixedColumnWidth(68),
                       2: pw.FixedColumnWidth(58),
-                      3: pw.FixedColumnWidth(50),
+                      3: pw.FixedColumnWidth(48),
                       4: pw.FixedColumnWidth(34),
-                      5: pw.FixedColumnWidth(52),
-                      6: pw.FixedColumnWidth(38),
+                      5: pw.FixedColumnWidth(48),
+                      6: pw.FixedColumnWidth(42),
+                      7: pw.FixedColumnWidth(38),
                     },
                     children: [
                       pw.TableRow(
@@ -941,6 +945,13 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             scaleDown: true,
                           ),
                           tableCell(
+                            'Others',
+                            style: tableHeaderStyle,
+                            backgroundColor: PdfColors.grey200,
+                            alignment: pw.Alignment.centerRight,
+                            scaleDown: true,
+                          ),
+                          tableCell(
                             'Net Wt',
                             style: tableHeaderStyle,
                             backgroundColor: PdfColors.grey200,
@@ -978,6 +989,12 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                               scaleDown: true,
                             ),
                             tableCell(
+                              entry.others,
+                              style: tableStyle,
+                              alignment: pw.Alignment.centerRight,
+                              scaleDown: true,
+                            ),
+                            tableCell(
                               entry.netWeight,
                               style: tableStyle,
                               alignment: pw.Alignment.centerRight,
@@ -1004,6 +1021,11 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                             _formatCurrency(combinedAdvanceTotalAmount),
                             style: tableHeaderStyle,
                             alignment: pw.Alignment.centerRight,
+                            backgroundColor: PdfColors.grey100,
+                          ),
+                          tableCell(
+                            '',
+                            style: tableHeaderStyle,
                             backgroundColor: PdfColors.grey100,
                           ),
                           tableCell(
@@ -1125,8 +1147,11 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                     ),
                   ],
                 ),
-                ...newItemList.asMap().entries.map(
-                  (entry) => pw.TableRow(
+                ...newItemList.asMap().entries.map((entry) {
+                  final itemNameStyle = entry.value.isDifferenceEntry
+                      ? tableStyle.copyWith(fontWeight: pw.FontWeight.bold)
+                      : tableStyle;
+                  return pw.TableRow(
                     children: [
                       tableCell(
                         '${entry.key + 1}',
@@ -1135,7 +1160,7 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                       ),
                       tableCell(
                         _newItemNameWithNotes(entry.value),
-                        style: tableStyle,
+                        style: itemNameStyle,
                       ),
                       tableCell(
                         _newItemCategoryLabel(entry.value.category),
@@ -1186,8 +1211,8 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                         alignment: pw.Alignment.centerRight,
                       ),
                     ],
-                  ),
-                ),
+                  );
+                }),
                 pw.TableRow(
                   decoration: const pw.BoxDecoration(color: PdfColors.grey100),
                   children: [
@@ -1294,9 +1319,34 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                 : takeawayFinalDueAmount == 0
                 ? 'Transaction Settled'
                 : 'Final Due Amount';
+            final takeawaySubtotal =
+                (advanceTotalAmount + advanceOldItemsTotalAmount) +
+                newItemsGrandTotal;
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
+                pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text('Additional Charges', style: labelStyle),
+                    ),
+                    pw.Text(
+                      _formatCurrency(newItemsAdditionalCharges),
+                      style: valueStyle,
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
+                pw.Row(
+                  children: [
+                    pw.Expanded(child: pw.Text('Subtotal', style: labelStyle)),
+                    pw.Text(
+                      _formatCurrency(takeawaySubtotal),
+                      style: valueStyle,
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 6),
                 pw.Row(
                   children: [
                     pw.Expanded(
@@ -1309,6 +1359,8 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
                   ],
                 ),
                 pw.SizedBox(height: 8),
+                pw.Text('Payments', style: labelStyle),
+                pw.SizedBox(height: 6),
                 if (takeawayList.isNotEmpty)
                   pw.Table(
                     border: pw.TableBorder.all(color: PdfColors.grey400),
@@ -1484,8 +1536,47 @@ class _CombinedBillPrintPreviewSheet extends StatelessWidget {
             ),
             pw.SizedBox(height: 10),
             sectionCard(
-              title: 'Takeaway Summary',
+              title: 'Totals',
               child: takeawaySummaryTable(),
+            ),
+            pw.SizedBox(height: 12),
+            pw.Center(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.black, width: 1.2),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    pw.Text(
+                      'BILL PENDING',
+                      style: pw.TextStyle(
+                        fontSize: 9,
+                        fontWeight: pw.FontWeight.bold,
+                        letterSpacing: 0.8,
+                        color: PdfColors.black,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                    pw.SizedBox(height: 8),
+                    pw.Container(
+                      width: 92,
+                      height: 1.2,
+                      color: PdfColors.black,
+                    ),
+                    pw.SizedBox(height: 5),
+                    pw.Container(
+                      width: 92,
+                      height: 1.2,
+                      color: PdfColors.black,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ];
         },
@@ -2379,6 +2470,10 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
           : NumberFormat('0.000', 'en_IN').format(value);
     }
 
+    String formatAdvanceOthers(double value) {
+      return NumberFormat('0.000', 'en_IN').format(_truncateWeight3(value));
+    }
+
     final sortedAdvanceItems = items.where((item) => !item.isEmpty).toList()
       ..sort((a, b) => a.date.compareTo(b.date));
     final lines = sortedAdvanceItems.map((item) => item.line).toList();
@@ -2409,6 +2504,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
               String rate,
               String making,
               String rateWithMaking,
+              String others,
               String netWeight,
             })
           >[
@@ -2420,6 +2516,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 rate: formatAdvanceRate(line.rate),
                 making: '${line.rateMaking.toStringAsFixed(2)}%',
                 rateWithMaking: formatAdvanceRateWithMaking(line.effectiveRate),
+                others: formatAdvanceOthers(line.otherCharges),
                 netWeight: formatAdvanceWeight3(line.weight),
               ),
             ),
@@ -2435,6 +2532,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                 rateWithMaking: formatAdvanceRateWithMaking(
                   item.advanceEffectiveRate,
                 ),
+                others: '-',
                 netWeight: formatAdvanceWeight3(item.advanceWeight),
               ),
             ),
@@ -2511,8 +2609,9 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                   2: pw.FixedColumnWidth(60),
                   3: pw.FixedColumnWidth(50),
                   4: pw.FixedColumnWidth(34),
-                  5: pw.FixedColumnWidth(50),
+                  5: pw.FixedColumnWidth(48),
                   6: pw.FixedColumnWidth(40),
+                  7: pw.FixedColumnWidth(40),
                 },
                 children: [
                   pw.TableRow(
@@ -2537,6 +2636,12 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                       ),
                       tableCell(
                         'Rate + Making',
+                        isHeader: true,
+                        alignment: pw.Alignment.centerRight,
+                        scaleDown: true,
+                      ),
+                      tableCell(
+                        'Others',
                         isHeader: true,
                         alignment: pw.Alignment.centerRight,
                         scaleDown: true,
@@ -2571,6 +2676,11 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                           scaleDown: true,
                         ),
                         tableCell(
+                          entry.others,
+                          alignment: pw.Alignment.centerRight,
+                          scaleDown: true,
+                        ),
+                        tableCell(
                           entry.netWeight,
                           alignment: pw.Alignment.centerRight,
                         ),
@@ -2586,6 +2696,7 @@ class _AdvancePrintPreviewSheet extends StatelessWidget {
                         isHeader: true,
                         alignment: pw.Alignment.centerRight,
                       ),
+                      tableCell(''),
                       tableCell(''),
                       tableCell(''),
                       tableCell(''),
