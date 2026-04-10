@@ -810,6 +810,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             date: item.date,
             mode: item.mode,
             amount: item.amount,
+            chequeNumber: item.chequeNumber,
           ),
         )
         .toList();
@@ -1082,6 +1083,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       return _takeawayRefundAmount;
     }
     return _takeawayFinalDueAmount;
+  }
+
+  void _syncBillPreviewLockedGstAddedAmount() {
+    if (!_billPreviewGstEnabled) {
+      return;
+    }
+    final next = _roundCurrency2(_takeawayBaseFinalDueAmount * 0.03);
+    _billPreviewLockedGstAddedAmount = next > 0 ? next : 0;
   }
 
   void _setBillPreviewGstEnabled(bool value) {
@@ -1443,7 +1452,12 @@ class _OrdersDashboardState extends State<OrdersDashboard>
   }
 
   void _attachTakeawayPaymentListeners(_TakeawayPaymentDraft item) {
-    item.amountController.addListener(_schedulePersistence);
+    for (final controller in [
+      item.amountController,
+      item.chequeNumberController,
+    ]) {
+      controller.addListener(_schedulePersistence);
+    }
   }
 
   void _schedulePersistence() {
@@ -2578,6 +2592,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                       date: payment.date,
                       mode: payment.mode,
                       amountText: payment.amount.toString(),
+                      chequeNumber: payment.chequeNumber,
                     ),
                   )
                   .toList(),
@@ -3148,6 +3163,7 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             date: payment.date,
             mode: payment.mode,
             amountText: payment.amount.toString(),
+            chequeNumber: payment.chequeNumber,
           ),
         )
         .toList();
@@ -4373,10 +4389,11 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   final deliveryDateField = _DateField(
                     date: _estimateDeliveryDate,
                     labelText: 'Delivery Date',
-                    valueStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: deliveryDateColor,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    valueStyle: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(
+                          color: deliveryDateColor,
+                          fontWeight: FontWeight.w700,
+                        ),
                     labelStyle: Theme.of(
                       context,
                     ).textTheme.bodyMedium?.copyWith(color: deliveryDateColor),
@@ -4416,7 +4433,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Center(child: Text('Customer Details', style: titleStyle)),
+                      Center(
+                        child: Text('Customer Details', style: titleStyle),
+                      ),
                       const SizedBox(height: 12),
                       if (isWide)
                         Row(
@@ -4677,8 +4696,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                         final item = _advanceOldItems[index];
                         return Padding(
                           padding: EdgeInsets.only(
-                            bottom:
-                                index == _advanceOldItems.length - 1 ? 0 : 12,
+                            bottom: index == _advanceOldItems.length - 1
+                                ? 0
+                                : 12,
                           ),
                           child: _AdvanceOldItemEditor(
                             index: index + 1,
@@ -4823,16 +4843,14 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     children: [
                       Text(
                         'Customer',
-                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                          color: Colors.grey.shade700,
-                        ),
+                        style: Theme.of(context).textTheme.labelMedium
+                            ?.copyWith(color: Colors.grey.shade700),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         customerName,
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                     ],
                   ),
@@ -4883,9 +4901,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             children: [
               Text(
                 label,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.grey.shade700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade700),
               ),
               const SizedBox(height: 2),
               Text(
@@ -4936,7 +4954,6 @@ class _OrdersDashboardState extends State<OrdersDashboard>
       ),
     );
   }
-
 
   Widget _buildItemsBody(double contentTopPadding) {
     final populatedNewItems = _populatedNewItems;
@@ -4993,7 +5010,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                     _differenceNewItem.category,
                   ),
                   onChanged: () {
-                    setState(() {});
+                    setState(() {
+                      _syncBillPreviewLockedGstAddedAmount();
+                    });
                     _schedulePersistence();
                   },
                   onCategoryChanged: (_) {
@@ -5070,7 +5089,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 floatingLabelStyle: TextStyle(color: additionalChargesColor),
               ),
               onChanged: (_) {
-                setState(() {});
+                setState(() {
+                  _syncBillPreviewLockedGstAddedAmount();
+                });
                 _schedulePersistence();
               },
             ),
@@ -5270,17 +5291,40 @@ class _OrdersDashboardState extends State<OrdersDashboard>
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    final item = _TakeawayPaymentDraft();
-                    _takeawayPayments.add(item);
-                    _attachTakeawayPaymentListeners(item);
-                  });
-                  _schedulePersistence();
-                },
-                icon: const Icon(Icons.add),
-                label: const Text('Add payment'),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        final item = _TakeawayPaymentDraft();
+                        _takeawayPayments.add(item);
+                        _attachTakeawayPaymentListeners(item);
+                      });
+                      _schedulePersistence();
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add payment'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        for (final item in _takeawayPayments) {
+                          item.dispose();
+                        }
+                        _takeawayPayments
+                          ..clear()
+                          ..add(_TakeawayPaymentDraft());
+                        _attachTakeawayPaymentListeners(_takeawayPayments.first);
+                        _syncBillPreviewLockedGstAddedAmount();
+                      });
+                      _schedulePersistence();
+                    },
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Reset payments'),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 12),
@@ -5295,7 +5339,9 @@ class _OrdersDashboardState extends State<OrdersDashboard>
                 hintText: 'Enter takeaway discount',
               ),
               onChanged: (_) {
-                setState(() {});
+                setState(() {
+                  _syncBillPreviewLockedGstAddedAmount();
+                });
                 _schedulePersistence();
               },
             ),
@@ -5638,28 +5684,22 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         ),
       if (_isAdmin && _selectedSection == AppSection.estimateCalculator)
         IconButton(
-          onPressed: () => _saveEstimateOrder(
-            stayOnEstimate: true,
-            syncImmediately: true,
-          ),
+          onPressed: () =>
+              _saveEstimateOrder(stayOnEstimate: true, syncImmediately: true),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
       if (_isAdmin && _selectedSection == AppSection.actual)
         IconButton(
-          onPressed: () => _saveEstimateOrder(
-            stayOnEstimate: true,
-            syncImmediately: true,
-          ),
+          onPressed: () =>
+              _saveEstimateOrder(stayOnEstimate: true, syncImmediately: true),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
       if (_isAdmin && _selectedSection == AppSection.billPreview)
         IconButton(
-          onPressed: () => _saveEstimateOrder(
-            stayOnEstimate: true,
-            syncImmediately: true,
-          ),
+          onPressed: () =>
+              _saveEstimateOrder(stayOnEstimate: true, syncImmediately: true),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
@@ -5671,10 +5711,8 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         ),
       if (_isAdmin && _selectedSection == AppSection.items)
         IconButton(
-          onPressed: () => _saveEstimateOrder(
-            stayOnEstimate: true,
-            syncImmediately: true,
-          ),
+          onPressed: () =>
+              _saveEstimateOrder(stayOnEstimate: true, syncImmediately: true),
           icon: const Icon(Icons.save_outlined),
           tooltip: _isEditingEstimate ? 'Update order' : 'Save order',
         ),
@@ -5749,101 +5787,100 @@ class _OrdersDashboardState extends State<OrdersDashboard>
         }
       },
       child: Scaffold(
-          appBar: AppBar(
-            leading: _isAdmin && _selectedSection != AppSection.orders
-                ? IconButton(
-                    onPressed: () {
+        appBar: AppBar(
+          leading: _isAdmin && _selectedSection != AppSection.orders
+              ? IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedSection = AppSection.orders;
+                      _selectedStatus = null;
+                    });
+                    _schedulePersistence();
+                  },
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Back to orders',
+                )
+              : null,
+          title: Text(appBarTitle),
+          actions: appBarActions,
+          bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(28),
+            child: _buildSaveStatusBar(),
+          ),
+        ),
+        floatingActionButton: _isAdmin && _selectedSection == AppSection.orders
+            ? FloatingActionButton.extended(
+                onPressed: _openAddOrderSheet,
+                icon: const Icon(Icons.add),
+                label: const Text('New order'),
+              )
+            : null,
+        bottomNavigationBar: !_showAdminEditNavigation
+            ? null
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_selectedSection == AppSection.billPreview)
+                    _buildBillPreviewStickyBar(),
+                  NavigationBar(
+                    selectedIndex: _selectedSection.index,
+                    onDestinationSelected: (index) {
+                      final nextSection = AppSection.values[index];
+                      if (_selectedSection == nextSection) {
+                        return;
+                      }
                       setState(() {
-                        _selectedSection = AppSection.orders;
-                        _selectedStatus = null;
+                        _selectedSection = nextSection;
+                        if (nextSection == AppSection.orders) {
+                          _selectedStatus = null;
+                        }
                       });
                       _schedulePersistence();
                     },
-                    icon: const Icon(Icons.arrow_back),
-                    tooltip: 'Back to orders',
-                  )
-                : null,
-            title: Text(appBarTitle),
-            actions: appBarActions,
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(28),
-              child: _buildSaveStatusBar(),
-            ),
-          ),
-          floatingActionButton:
-              _isAdmin && _selectedSection == AppSection.orders
-              ? FloatingActionButton.extended(
-                  onPressed: _openAddOrderSheet,
-                  icon: const Icon(Icons.add),
-                  label: const Text('New order'),
-                )
-              : null,
-          bottomNavigationBar: !_showAdminEditNavigation
-              ? null
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_selectedSection == AppSection.billPreview)
-                      _buildBillPreviewStickyBar(),
-                    NavigationBar(
-                      selectedIndex: _selectedSection.index,
-                      onDestinationSelected: (index) {
-                        final nextSection = AppSection.values[index];
-                        if (_selectedSection == nextSection) {
-                          return;
-                        }
-                        setState(() {
-                          _selectedSection = nextSection;
-                          if (nextSection == AppSection.orders) {
-                            _selectedStatus = null;
-                          }
-                        });
-                        _schedulePersistence();
-                      },
-                      destinations: const [
-                        NavigationDestination(
-                          icon: Icon(Icons.receipt_long_outlined),
-                          label: 'Orders',
-                        ),
-                        NavigationDestination(
-                          icon: Icon(Icons.calculate_outlined),
-                          label: 'Estimate',
-                        ),
-                        NavigationDestination(
-                          icon: Icon(Icons.account_balance_wallet_outlined),
-                          label: 'Advance',
-                        ),
-                        NavigationDestination(
-                          icon: Icon(Icons.scale_outlined),
-                          label: 'Actual',
-                        ),
-                        NavigationDestination(
-                          icon: Icon(Icons.add_box_outlined),
-                          label: 'New Items',
-                        ),
-                        NavigationDestination(
-                          icon: Icon(Icons.receipt_long_outlined),
-                          label: 'Summary',
-                        ),
-                      ],
-                    ),
-                  ],
+                    destinations: const [
+                      NavigationDestination(
+                        icon: Icon(Icons.receipt_long_outlined),
+                        label: 'Orders',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.calculate_outlined),
+                        label: 'Estimate',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.account_balance_wallet_outlined),
+                        label: 'Advance',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.scale_outlined),
+                        label: 'Actual',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.add_box_outlined),
+                        label: 'New Items',
+                      ),
+                      NavigationDestination(
+                        icon: Icon(Icons.receipt_long_outlined),
+                        label: 'Summary',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+        body: _isUser
+            ? _buildOrdersBody(contentTopPadding)
+            : switch (_selectedSection) {
+                AppSection.orders => _buildOrdersBody(contentTopPadding),
+                AppSection.estimateCalculator => _buildEstimateCalculatorBody(
+                  contentTopPadding,
                 ),
-          body: _isUser
-              ? _buildOrdersBody(contentTopPadding)
-              : switch (_selectedSection) {
-                  AppSection.orders => _buildOrdersBody(contentTopPadding),
-                  AppSection.estimateCalculator => _buildEstimateCalculatorBody(
-                    contentTopPadding,
-                  ),
-                  AppSection.advance => _buildAdvanceBody(contentTopPadding),
-                  AppSection.actual => _buildActualBody(contentTopPadding),
-                  AppSection.items => _buildItemsBody(contentTopPadding),
-                  AppSection.billPreview => _buildBillPreviewBody(
-                    contentTopPadding,
-                  ),
-                },
-        ),
+                AppSection.advance => _buildAdvanceBody(contentTopPadding),
+                AppSection.actual => _buildActualBody(contentTopPadding),
+                AppSection.items => _buildItemsBody(contentTopPadding),
+                AppSection.billPreview => _buildBillPreviewBody(
+                  contentTopPadding,
+                ),
+              },
+      ),
     );
   }
 }
@@ -6237,9 +6274,7 @@ class _ActualItemEditor extends StatelessWidget {
           : purityOptions.first,
       decoration: const InputDecoration(labelText: 'Purity'),
       items: purityOptions
-          .map(
-            (option) => DropdownMenuItem(value: option, child: Text(option)),
-          )
+          .map((option) => DropdownMenuItem(value: option, child: Text(option)))
           .toList(),
       onChanged: (value) {
         item.purityController.text = value ?? purityOptions.first;
@@ -6271,7 +6306,9 @@ class _ActualItemEditor extends StatelessWidget {
         }
       },
       child: DropdownButtonFormField<int>(
-        initialValue: quantityOptions.contains(item.quantity) ? item.quantity : 1,
+        initialValue: quantityOptions.contains(item.quantity)
+            ? item.quantity
+            : 1,
         decoration: InputDecoration(
           labelText: 'Quantity',
           errorText: item.quantityError,
@@ -7359,7 +7396,8 @@ class _AdvanceValuationEditor extends StatelessWidget {
           decoration: const InputDecoration(labelText: 'Mode'),
           items: AdvanceMode.values
               .map(
-                (mode) => DropdownMenuItem(value: mode, child: Text(mode.label)),
+                (mode) =>
+                    DropdownMenuItem(value: mode, child: Text(mode.label)),
               )
               .toList(),
           onChanged: (value) {
@@ -7378,7 +7416,10 @@ class _AdvanceValuationEditor extends StatelessWidget {
           controller: item.rateController,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           inputFormatters: const [_IndianCurrencyInputFormatter()],
-          decoration: const InputDecoration(labelText: 'Rate22', hintText: '-Unfix-'),
+          decoration: const InputDecoration(
+            labelText: 'Rate22',
+            hintText: '-Unfix-',
+          ),
           onChanged: (_) => onChanged(),
         );
         final makingField = TextField(
@@ -7409,10 +7450,7 @@ class _AdvanceValuationEditor extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    'Apply',
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
+                  Text('Apply', style: Theme.of(context).textTheme.labelSmall),
                   Switch.adaptive(
                     value: item.gstApplied,
                     onChanged: (value) {
@@ -7508,7 +7546,9 @@ class _AdvanceValuationEditor extends StatelessWidget {
                   TextField(
                     controller: item.chequeNumberController,
                     keyboardType: TextInputType.text,
-                    decoration: const InputDecoration(labelText: 'Cheque Number'),
+                    decoration: const InputDecoration(
+                      labelText: 'Cheque Number',
+                    ),
                     onChanged: (_) => onChanged(),
                   ),
                 ],
@@ -7524,12 +7564,17 @@ class _AdvanceValuationEditor extends StatelessWidget {
 }
 
 class _TakeawayPaymentDraft {
-  _TakeawayPaymentDraft({DateTime? date, AdvanceMode? mode, String? amountText})
-    : _date = date ?? DateTime.now(),
-      _mode = mode ?? AdvanceMode.cash,
-      amountController = TextEditingController(
-        text: _formatIndianNumberInput(amountText ?? ''),
-      );
+  _TakeawayPaymentDraft({
+    DateTime? date,
+    AdvanceMode? mode,
+    String? amountText,
+    String? chequeNumber,
+  }) : _date = date ?? DateTime.now(),
+       _mode = mode ?? AdvanceMode.cash,
+       amountController = TextEditingController(
+         text: _formatIndianNumberInput(amountText ?? ''),
+       ),
+       chequeNumberController = TextEditingController(text: chequeNumber ?? '');
 
   factory _TakeawayPaymentDraft.fromJson(Map<String, dynamic> json) {
     return _TakeawayPaymentDraft(
@@ -7539,12 +7584,14 @@ class _TakeawayPaymentDraft {
         orElse: () => AdvanceMode.cash,
       ),
       amountText: json['amountText'] as String? ?? '',
+      chequeNumber: json['chequeNumber'] as String? ?? '',
     );
   }
 
   DateTime? _date;
   AdvanceMode? _mode;
   final TextEditingController amountController;
+  final TextEditingController chequeNumberController;
 
   DateTime get date => _date ?? DateTime.now();
 
@@ -7562,16 +7609,23 @@ class _TakeawayPaymentDraft {
 
   bool get isEmpty => amount == 0;
 
+  String? get chequeNumber {
+    final value = chequeNumberController.text.trim();
+    return value.isEmpty ? null : value;
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'date': date.toIso8601String(),
       'mode': mode.name,
       'amountText': amountController.text,
+      'chequeNumber': chequeNumberController.text,
     };
   }
 
   void dispose() {
     amountController.dispose();
+    chequeNumberController.dispose();
   }
 }
 
@@ -7593,37 +7647,49 @@ class _TakeawayPaymentEditor extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 640;
-        final fields = [
-          _DateField(
-            date: item.date,
-            labelText: 'Date',
-            onDateSelected: (selected) {
-              item.date = selected;
-              onChanged();
-            },
-          ),
-          DropdownButtonFormField<AdvanceMode>(
-            initialValue: item.mode,
-            decoration: const InputDecoration(labelText: 'Mode'),
-            items: AdvanceMode.values
-                .map(
-                  (mode) =>
-                      DropdownMenuItem(value: mode, child: Text(mode.label)),
-                )
-                .toList(),
-            onChanged: (value) {
-              item.mode = value ?? AdvanceMode.cash;
-              onChanged();
-            },
-          ),
-          TextField(
-            controller: item.amountController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: const [_IndianCurrencyInputFormatter()],
-            decoration: const InputDecoration(labelText: 'Amount'),
-            onChanged: (_) => onChanged(),
-          ),
-        ];
+        final dateField = _DateField(
+          date: item.date,
+          labelText: 'Date',
+          onDateSelected: (selected) {
+            item.date = selected;
+            onChanged();
+          },
+        );
+        final modeField = DropdownButtonFormField<AdvanceMode>(
+          initialValue: item.mode,
+          decoration: const InputDecoration(labelText: 'Mode'),
+          items: AdvanceMode.values
+              .map(
+                (mode) => DropdownMenuItem(
+                  value: mode,
+                  child: Text(
+                    mode == AdvanceMode.banking &&
+                            item.mode == AdvanceMode.banking &&
+                            (item.chequeNumber?.trim() ?? '').isNotEmpty
+                        ? '${mode.label} (${item.chequeNumber!.trim()})'
+                        : mode.label,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            item.mode = value ?? AdvanceMode.cash;
+            onChanged();
+          },
+        );
+        final chequeField = TextField(
+          controller: item.chequeNumberController,
+          keyboardType: TextInputType.text,
+          decoration: const InputDecoration(labelText: 'Cheque No.'),
+          onChanged: (_) => onChanged(),
+        );
+        final amountField = TextField(
+          controller: item.amountController,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: const [_IndianCurrencyInputFormatter()],
+          decoration: const InputDecoration(labelText: 'Amount'),
+          onChanged: (_) => onChanged(),
+        );
 
         return Container(
           padding: const EdgeInsets.all(12),
@@ -7656,21 +7722,35 @@ class _TakeawayPaymentEditor extends StatelessWidget {
               if (isCompact)
                 Column(
                   children: [
-                    fields[0],
+                    dateField,
                     const SizedBox(height: 12),
-                    fields[1],
+                    modeField,
+                    if (item.mode == AdvanceMode.banking) ...[
+                      const SizedBox(height: 12),
+                      chequeField,
+                    ],
                     const SizedBox(height: 12),
-                    fields[2],
+                    amountField,
                   ],
                 )
               else
                 Row(
                   children: [
-                    Expanded(child: fields[0]),
+                    Expanded(child: dateField),
                     const SizedBox(width: 12),
-                    Expanded(child: fields[1]),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Expanded(child: modeField),
+                          if (item.mode == AdvanceMode.banking) ...[
+                            const SizedBox(width: 12),
+                            SizedBox(width: 160, child: chequeField),
+                          ],
+                        ],
+                      ),
+                    ),
                     const SizedBox(width: 12),
-                    Expanded(child: fields[2]),
+                    Expanded(child: amountField),
                   ],
                 ),
             ],
@@ -7994,7 +8074,9 @@ class _AdvanceOldItemEditor extends StatelessWidget {
                       decimal: true,
                     ),
                     inputFormatters: const [_IndianCurrencyInputFormatter()],
-                    decoration: const InputDecoration(labelText: 'Advance Rate'),
+                    decoration: const InputDecoration(
+                      labelText: 'Advance Rate',
+                    ),
                     onChanged: (_) => onChanged(),
                   ),
                   TextField(
@@ -8017,4 +8099,3 @@ class _AdvanceOldItemEditor extends StatelessWidget {
     );
   }
 }
-

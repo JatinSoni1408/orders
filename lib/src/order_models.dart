@@ -276,17 +276,20 @@ class TakeawayPayment {
     required this.date,
     required this.mode,
     required this.amount,
+    this.chequeNumber,
   });
 
   final DateTime date;
   final AdvanceMode mode;
   final double amount;
+  final String? chequeNumber;
 
   Map<String, dynamic> toJson() {
     return {
       'date': date.toIso8601String(),
       'mode': mode.name,
       'amount': amount,
+      'chequeNumber': chequeNumber,
     };
   }
 
@@ -298,6 +301,7 @@ class TakeawayPayment {
         orElse: () => AdvanceMode.cash,
       ),
       amount: (json['amount'] as num?)?.toDouble() ?? 0,
+      chequeNumber: json['chequeNumber'] as String?,
     );
   }
 }
